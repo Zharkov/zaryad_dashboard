@@ -308,20 +308,41 @@ canvas { max-height: 300px; }
 
 /* Easter egg — flying pig */
 #flyingPig {
-  position: fixed; top: 42%; left: -180px;
-  font-size: 120px; pointer-events: none; z-index: 9999;
-  display: none; transform: scaleX(-1);
-  filter: drop-shadow(0 4px 12px rgba(255,105,180,0.6));
+  position: fixed; top: 36%; left: -220px;
+  pointer-events: none; z-index: 9999;
+  display: none; text-align: center; line-height: 1;
+  filter: drop-shadow(0 4px 16px rgba(255,105,180,0.7));
+}
+.pig-speech {
+  display: inline-block; font-size: 14px; font-weight: 700;
+  color: #ff69b4; background: #fff; border-radius: 10px;
+  padding: 3px 10px; margin-bottom: 4px;
+  border: 2px solid #ff69b4; white-space: nowrap;
+}
+.pig-emoji {
+  display: block; font-size: 72px;
+  transform: scaleX(-1);
+}
+.pig-label {
+  display: block; font-size: 13px; font-weight: 700;
+  color: #ff69b4; margin-top: 4px; letter-spacing: 2px;
+  text-shadow: 0 0 8px rgba(255,105,180,0.5);
 }
 @keyframes pigFly {
-  0%   { left: -120px; top: 42%; transform: scaleX(-1) rotate(0deg); }
-  20%  { top: 35%;  transform: scaleX(-1) rotate(-8deg); }
-  40%  { top: 48%;  transform: scaleX(-1) rotate(6deg); }
-  60%  { top: 33%;  transform: scaleX(-1) rotate(-6deg); }
-  80%  { top: 46%;  transform: scaleX(-1) rotate(4deg); }
-  100% { left: calc(100vw + 120px); top: 42%; transform: scaleX(-1) rotate(0deg); }
+  0%   { left: -220px; top: 36%; }
+  20%  { top: 28%; }
+  40%  { top: 44%; }
+  60%  { top: 26%; }
+  80%  { top: 42%; }
+  100% { left: calc(100vw + 220px); top: 36%; }
+}
+@keyframes pigWobble {
+  0%, 100% { transform: scaleX(-1) rotate(0deg); }
+  25%       { transform: scaleX(-1) rotate(-8deg); }
+  75%       { transform: scaleX(-1) rotate(8deg); }
 }
 #flyingPig.flying { display: block; animation: pigFly 4s ease-in-out forwards; }
+#flyingPig.flying .pig-emoji { animation: pigWobble 0.5s ease-in-out infinite; }
 
 /* Worker rank list */
 .worker-rank-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }

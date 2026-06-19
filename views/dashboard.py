@@ -15,7 +15,7 @@ _DASHBOARD_HTML = """<!doctype html>
 <title>ЗАРЯД · Дашборд</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=3">
 </head><body>
 
 {topbar}
@@ -193,7 +193,11 @@ _DASHBOARD_HTML = """<!doctype html>
 </div>
 
 <div class="toast" id="toast"></div>
-<div id="flyingPig">🐷</div>
+<div id="flyingPig">
+  <div class="pig-speech">хрю-хрю!</div>
+  <span class="pig-emoji">🐷</span>
+  <div class="pig-label">Свиня</div>
+</div>
 
 <script>
 const WORKERS = {workers_json};
