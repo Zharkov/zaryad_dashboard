@@ -46,6 +46,7 @@ class PostRoutesMixin:
                 break
 
         is_worker = session_data and session_data.get("role") == "worker"
+        is_accountant = session_data and session_data.get("role") == "accountant"
 
         ADMIN_ROUTES = {
             "/api/mass_mark": self._api_mass_mark,
@@ -74,12 +75,22 @@ class PostRoutesMixin:
             "/api/delete_comment": self._api_delete_comment,
             "/api/add_shift_comment": self._api_add_shift_comment,
             "/api/delete_shift_comment": self._api_delete_shift_comment,
+            "/api/add_object_comment": self._api_add_object_comment,
+            "/api/delete_object_comment": self._api_delete_object_comment,
+            "/api/delete_worker_access": self._api_delete_worker_access,
+            "/api/set_worker_password": self._api_set_worker_password,
+            "/api/add_user": self._api_add_user,
+            "/api/change_user_role": self._api_change_user_role,
+            "/api/change_user_password": self._api_change_user_password,
+            "/api/delete_user": self._api_delete_user,
         }
 
         handler = ADMIN_ROUTES.get(path)
         if handler:
             if is_worker:
                 self._send_json({"error": "forbidden"}, 403)
+            elif is_accountant:
+                self._send_json({"ok": False, "error": "Только просмотр"}, 403)
             else:
                 handler(user)
         else:
@@ -91,8 +102,9 @@ class PostRoutesMixin:
         password = (body.get("password", [""])[0] or "").strip()
 
         if username and password:
-            if authenticate_admin(username, password):
-                token = create_session(username, role="admin")
+            role = authenticate_admin(username, password)
+            if role:
+                token = create_session(username, role=role)
                 self.send_response(303)
                 self._set_session_cookie(token)
                 self.send_header("Location", "/")
@@ -512,4 +524,104 @@ class PostRoutesMixin:
             return
         from db.comments import delete_shift_comment
         ok = delete_shift_comment(int(comment_id))
+        self._send_json({"ok": ok})
+
+    def _api_add_object_comment(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        object_id = data.get("object_id")
+        text = (data.get("text") or "").strip()
+        if not object_id or not text:
+            self._send_json({"ok": False, "error": "Нет данных"}, 400)
+            return
+        from db.comments import add_object_comment
+        ok, msg, cid = add_object_comment(int(object_id), admin, text)
+        self._send_json({"ok": ok, "id": cid} if ok else {"ok": False, "error": msg})
+
+    def _api_set_worker_password(self, admin: str):
+        data = self._read_body_json()
+        wid = data.get("worker_id") if data else None
+        password = (data.get("password") or "").strip() if data else ""
+        if not wid or not password:
+            self._send_json({"ok": False, "error": "Нет данных"}, 400)
+            return
+        from db.credentials import set_worker_password
+        ok = set_worker_password(int(wid), password, admin)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": "Не найден"})
+
+    def _api_delete_worker_access(self, admin: str):
+        data = self._read_body_json()
+        wid = data.get("worker_id") if data else None
+        if not wid:
+            self._send_json({"ok": False, "error": "Нет ID"}, 400)
+            return
+        from db.credentials import delete_worker_credential
+        ok = delete_worker_credential(int(wid), admin)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": "Не найден"})
+
+    def _api_add_user(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400); return
+        username = (data.get("username") or "").strip()
+        password = (data.get("password") or "").strip()
+        role = (data.get("role") or "admin").strip()
+        if not username or not password:
+            self._send_json({"ok": False, "error": "Нет данных"}, 400); return
+        from db.admin_users import add_admin
+        ok, msg = add_admin(username, password, role)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": msg})
+
+    def _api_change_user_role(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400); return
+        username = (data.get("username") or "").strip()
+        role = (data.get("role") or "").strip()
+        if not username or role not in ("admin", "accountant"):
+            self._send_json({"ok": False, "error": "Нет данных"}, 400); return
+        if username == admin:
+            self._send_json({"ok": False, "error": "Нельзя изменить свою роль"}, 400); return
+        from db.admin_users import change_role
+        ok = change_role(username, role)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": "Не найден"})
+
+    def _api_change_user_password(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400); return
+        username = (data.get("username") or "").strip()
+        password = (data.get("password") or "").strip()
+        if not username or not password:
+            self._send_json({"ok": False, "error": "Нет данных"}, 400); return
+        from db.admin_users import change_password
+        ok = change_password(username, password)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": "Не найден"})
+
+    def _api_delete_user(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400); return
+        username = (data.get("username") or "").strip()
+        if not username:
+            self._send_json({"ok": False, "error": "Нет логина"}, 400); return
+        if username == admin:
+            self._send_json({"ok": False, "error": "Нельзя удалить себя"}, 400); return
+        from db.admin_users import delete_admin
+        ok = delete_admin(username)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": "Не найден"})
+
+    def _api_delete_object_comment(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        comment_id = data.get("id")
+        if not comment_id:
+            self._send_json({"ok": False, "error": "Нет ID"}, 400)
+            return
+        from db.comments import delete_object_comment
+        ok = delete_object_comment(int(comment_id))
         self._send_json({"ok": ok})

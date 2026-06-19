@@ -78,6 +78,37 @@ def get_shift_comment_counts(shift_ids: list) -> dict:
     return {row["shift_id"]: row["cnt"] for row in rows}
 
 
+def get_object_comments(object_id: int) -> list:
+    with db_conn() as c:
+        return list(c.execute(
+            "SELECT * FROM object_comments WHERE object_id = ? AND deleted_at IS NULL "
+            "ORDER BY created_at ASC",
+            (object_id,),
+        ))
+
+
+def add_object_comment(object_id: int, author: str, text: str) -> tuple[bool, str, int]:
+    now = now_msk().isoformat()
+    with db_conn() as c:
+        cur = c.execute(
+            "INSERT INTO object_comments (object_id, author, text, created_at) VALUES (?, ?, ?, ?)",
+            (object_id, author, text, now),
+        )
+        return True, "OK", cur.lastrowid
+
+
+def delete_object_comment(comment_id: int) -> bool:
+    with db_conn() as c:
+        row = c.execute("SELECT id FROM object_comments WHERE id = ?", (comment_id,)).fetchone()
+        if not row:
+            return False
+        c.execute(
+            "UPDATE object_comments SET deleted_at = ? WHERE id = ?",
+            (now_msk().isoformat(), comment_id),
+        )
+    return True
+
+
 def get_shift_comments_bulk(shift_ids: list) -> dict:
     if not shift_ids:
         return {}

@@ -5,7 +5,8 @@ from views.worker_profile import render_worker_profile
 from views.my_page import render_my_page
 from views.objects import render_objects
 from views.object_detail import render_object_detail
-from views.export import render_csv
+from views.export import render_csv, render_xlsx
+from views.users_page import render_users
 
 __all__ = [
     "render_login",
@@ -16,4 +17,6 @@ __all__ = [
     "render_objects",
     "render_object_detail",
     "render_csv",
+    "render_xlsx",
+    "render_users",
 ]

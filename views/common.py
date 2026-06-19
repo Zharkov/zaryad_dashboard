@@ -13,9 +13,18 @@ LOGO_SVG = """<svg width="56" height="26" viewBox="0 0 80 36" xmlns="http://www.
 </svg>"""
 
 
-def topbar(active: str, user: str) -> str:
+def topbar(active: str, user: str, role: str = "admin") -> str:
     def cls(name):
         return "active" if active == name else ""
+    if role == "accountant":
+        nav = f'<a href="/" class="{cls("dashboard")}">Дашборд</a>'
+    else:
+        nav = (
+            f'<a href="/" class="{cls("dashboard")}">Дашборд</a>'
+            f'<a href="/workers" class="{cls("workers")}">Работники</a>'
+            f'<a href="/objects" class="{cls("objects")}">Объекты</a>'
+            f'<a href="/users" class="{cls("users")}">Пользователи</a>'
+        )
     return f"""
 <div class="topbar">
   <div class="container topbar-inner">
@@ -26,11 +35,7 @@ def topbar(active: str, user: str) -> str:
         <div class="sub">Табель</div>
       </div>
     </a>
-    <div class="nav">
-      <a href="/" class="{cls('dashboard')}">Дашборд</a>
-      <a href="/workers" class="{cls('workers')}">Работники</a>
-      <a href="/objects" class="{cls('objects')}">Объекты</a>
-    </div>
+    <div class="nav">{nav}</div>
     <div class="user-info">
       <span>👤 {_html.escape(user)}</span>
       <a href="/logout">Выйти</a>

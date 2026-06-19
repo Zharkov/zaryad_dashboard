@@ -17,7 +17,7 @@ _DASHBOARD_HTML = """<!doctype html>
 <title>ЗАРЯД · Дашборд</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<link rel="stylesheet" href="/static/style.css?v=5">
+<link rel="stylesheet" href="/static/style.css?v=7">
 </head><body>
 
 {topbar}
@@ -26,12 +26,7 @@ _DASHBOARD_HTML = """<!doctype html>
 
 <h1><span id="chartIcon" onclick="chartIconClick()" style="cursor:default;user-select:none;">📊</span> {period_label}</h1>
 
-<div class="actions">
-  <button class="btn btn-primary" onclick="openMassMark('arr')">➕ Приход</button>
-  <button class="btn btn-primary" onclick="openMassMark('dep')">➖ Уход</button>
-  <button class="btn" onclick="openBackdate()">📝 За другой день</button>
-  <a class="btn" href="{export_url}">📥 Экспорт CSV</a>
-</div>
+{actions_block}
 
 <div class="periods">{period_links}
   <a href="#" onclick="event.preventDefault(); toggleCal()" class="{custom_active}">📅 Свой период</a>
@@ -70,7 +65,7 @@ _DASHBOARD_HTML = """<!doctype html>
 <h2>Тренд по дням</h2>
 <div class="chart-box"><canvas id="byDay"></canvas></div>
 
-<h2>Детализация · клик по строке для правки</h2>
+<h2>{detail_title}</h2>
 <form method="GET" action="/" class="mb-sm">
   <input type="hidden" name="period" value="{period}">
   <input class="search" type="text" name="search" placeholder="🔍 Поиск по имени работника..."
@@ -102,7 +97,7 @@ _DASHBOARD_HTML = """<!doctype html>
   {totals_row}
 </div>
 
-<div class="footer">Обновлено: {now} · автообновление каждые 30 сек</div>
+<div class="footer">Обновлено: {now}</div>
 
 </div>
 
@@ -216,6 +211,7 @@ _DASHBOARD_HTML = """<!doctype html>
 
 <script>
 const WORKERS = {workers_json};
+const IS_ACCOUNTANT = {is_accountant_js};
 let massAction = "arr";
 let editingShiftId = null;
 
@@ -638,7 +634,8 @@ function chartIconClick() {{
 
 
 def render_dashboard(period: str, search: str, user: str,
-                     custom_from: str = "", custom_to: str = "") -> str:
+                     custom_from: str = "", custom_to: str = "",
+                     is_accountant: bool = False) -> str:
     date_from, date_to = parse_period(period, custom_from, custom_to)
     shifts = get_shifts(date_from, date_to)
     workers = get_workers(include_deleted=False)
@@ -690,7 +687,7 @@ def render_dashboard(period: str, search: str, user: str,
             hrs = int(delta.total_seconds() // 3600)
             mins = int((delta.total_seconds() % 3600) // 60)
             hours_str = f'<span class="text-brand">{hrs}ч {mins:02d}мин</span>'
-            if arr.date() == now.date():
+            if arr.date() == now.date() and not is_accountant:
                 left_str = (
                     f'<button class="btn btn-sm" '
                     f'onclick="event.stopPropagation(); closeShiftNow({s["id"]}, '
@@ -715,9 +712,8 @@ def render_dashboard(period: str, search: str, user: str,
 
         worker_link = (
             f'<a href="/worker?id={s["worker_id"]}" onclick="event.stopPropagation();" '
-            f'title="Открыть профиль" '
-            f'class="worker-link">👤</a>'
-            f'<span>{html.escape(s["worker_name"])}</span>'
+            f'title="Открыть профиль" class="worker-link">'
+            f'👤 {html.escape(s["worker_name"])}</a>'
         )
 
         name_js = html.escape(json.dumps(s["worker_name"], ensure_ascii=False), quote=True)
@@ -725,13 +721,20 @@ def render_dashboard(period: str, search: str, user: str,
         arr_hhmm = arr.strftime('%H:%M')
         left_hhmm = dt.datetime.fromisoformat(s['left_at']).strftime('%H:%M') if s['left_at'] else ''
         click_call = f"editShift({s['id']},'{arr_hhmm}','{left_hhmm}',{name_js},{date_js})"
-        edit_btn = (
-            f'<button class="btn btn-sm" '
-            f'onclick="event.stopPropagation(); {click_call}">✏️</button>'
-        )
+        if is_accountant:
+            edit_btn = ''
+            row_onclick = ''
+            row_cls = f'shift-row {cls}'
+        else:
+            edit_btn = (
+                f'<button class="btn btn-sm" '
+                f'onclick="event.stopPropagation(); {click_call}">✏️</button>'
+            )
+            row_onclick = f' onclick="{click_call}"'
+            row_cls = f'hover-row shift-row {cls}'
         obj_ids_str = ",".join(str(oid) for oid in worker_obj_map.get(s["worker_id"], []))
         rows.append(
-            f'<tr class="hover-row shift-row {cls}" onclick="{click_call}"'
+            f'<tr class="{row_cls}"{row_onclick}'
             f' data-auto="{1 if is_auto else 0}"'
             f' data-open="{1 if is_open else 0}"'
             f' data-late="{1 if late_cls in ("late", "very-late") else 0}"'
@@ -755,10 +758,13 @@ def render_dashboard(period: str, search: str, user: str,
                     f'<div class="comment-meta">'
                     f'<span class="comment-author">👤 {html.escape(c["author"])}</span>'
                     f'<span class="comment-date">{created.strftime("%d.%m %H:%M")}</span>'
-                    f'<button class="btn btn-sm btn-danger" '
-                    f'onclick="event.stopPropagation(); deleteShiftComment({c["id"]})">'
-                    f'× Удалить</button>'
-                    f'</div>'
+                    + (
+                        f'<button class="btn btn-sm btn-danger" '
+                        f'onclick="event.stopPropagation(); deleteShiftComment({c["id"]})">'
+                        f'× Удалить</button>'
+                        if not is_accountant else ''
+                    )
+                    + f'</div>'
                     f'<div class="comment-body">{html.escape(c["text"])}</div>'
                     f'</div>'
                 )
@@ -870,9 +876,31 @@ def render_dashboard(period: str, search: str, user: str,
     export_qs = f"period={period}"
     if period == "custom":
         export_qs += f"&from={custom_from}&to={custom_to}"
+    if search:
+        export_qs += f"&search={urllib.parse.quote(search)}"
+    xlsx_url = f"/export_xlsx?{export_qs}"
+
+    if is_accountant:
+        actions_block = (
+            f'<div class="actions">'
+            f'<a class="btn" href="{xlsx_url}">📥 Экспорт Excel</a>'
+            f'</div>'
+        )
+    else:
+        actions_block = (
+            f'<div class="actions">'
+            f'<button class="btn btn-primary" onclick="openMassMark(\'arr\')">➕ Приход</button>'
+            f'<button class="btn btn-primary" onclick="openMassMark(\'dep\')">➖ Уход</button>'
+            f'<button class="btn" onclick="openBackdate()">📝 За другой день</button>'
+            f'<a class="btn" href="{xlsx_url}">📥 Экспорт Excel</a>'
+            f'</div>'
+        )
+
+    detail_title = "Детализация · только просмотр" if is_accountant else "Детализация · клик по строке для правки"
+    is_accountant_js = "true" if is_accountant else "false"
 
     return _DASHBOARD_HTML.format(
-        topbar=topbar("dashboard", user),
+        topbar=topbar("dashboard", user, role="accountant" if is_accountant else "admin"),
         period_label=PERIOD_LABELS.get(period, period),
         period=period,
         period_links=period_links,
@@ -889,6 +917,9 @@ def render_dashboard(period: str, search: str, user: str,
         stat_auto_count=auto_count,
         stat_open_now=len(open_now),
         open_shifts_block=open_html,
+        actions_block=actions_block,
+        detail_title=detail_title,
+        is_accountant_js=is_accountant_js,
         table_rows="\n".join(rows) if rows else
             '<tr><td colspan="7" class="empty-cell">Нет данных за период</td></tr>',
         totals_row=totals_str,
@@ -899,5 +930,4 @@ def render_dashboard(period: str, search: str, user: str,
         chart_by_day_data=json.dumps(bd_data),
         workers_json=json.dumps(workers_data, ensure_ascii=False),
         now=now.strftime("%d.%m.%Y %H:%M"),
-        export_url=f"/export?{export_qs}",
     )

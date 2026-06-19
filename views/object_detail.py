@@ -6,13 +6,14 @@ from views.common import topbar
 from db.objects import get_object_by_id
 from db.workers import get_workers
 from db.attachments import get_workers_of_object
+from db.comments import get_object_comments
 
 _OBJECT_PAGE = """<!doctype html>
 <html lang="ru"><head>
 <meta charset="utf-8">
 <title>ЗАРЯД · {name}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=7">
 </head><body>
 {topbar}
 <div class="container">
@@ -25,12 +26,27 @@ _OBJECT_PAGE = """<!doctype html>
   <button class="btn btn-primary" onclick="openAttach()">👥 Прикрепить работников</button>
 </div>
 
-<h2>Прикреплённые работники ({worker_count})</h2>
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('workers', this)">👥 Работники ({worker_count})</button>
+  <button class="tab-btn" onclick="switchTab('comments', this)">💬 Заметки ({comments_count})</button>
+</div>
+
+<div id="tab_workers" class="tab-panel active">
 <div class="scroll-x">
 <table>
   <thead><tr><th>Имя</th><th>График</th><th>Прикреплён</th><th>Действия</th></tr></thead>
   <tbody>{worker_rows}</tbody>
 </table>
+</div>
+</div>
+
+<div id="tab_comments" class="tab-panel">
+  <div id="commentsBlock">{comments_html}</div>
+  <div class="mt-sm">
+    <textarea id="commentText" class="textarea-full mb-sm" rows="3"
+              placeholder="Написать заметку к объекту..."></textarea>
+    <button class="btn btn-primary" onclick="submitComment()">💬 Добавить</button>
+  </div>
 </div>
 
 <div class="footer">📍 {name}</div>
@@ -143,6 +159,40 @@ async function submitAttach() {{
   }} catch (e) {{ showToast("Сеть: " + e.message, true); }}
 }}
 
+function switchTab(name, btn) {{
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab_' + name).classList.add('active');
+}}
+
+async function submitComment() {{
+  const text = document.getElementById('commentText').value.trim();
+  if (!text) {{ showToast('Введи текст', true); return; }}
+  try {{
+    const r = await fetch('/api/add_object_comment', {{
+      method: 'POST', headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{object_id: OBJECT_ID, text}}),
+    }});
+    const d = await r.json();
+    if (d.ok) {{ showToast('Добавлено'); setTimeout(() => location.reload(), 400); }}
+    else showToast(d.error || 'Ошибка', true);
+  }} catch(e) {{ showToast('Сеть: ' + e.message, true); }}
+}}
+
+async function deleteComment(id) {{
+  if (!confirm('Удалить заметку?')) return;
+  try {{
+    const r = await fetch('/api/delete_object_comment', {{
+      method: 'POST', headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{id}}),
+    }});
+    const d = await r.json();
+    if (d.ok) {{ showToast('Удалено'); setTimeout(() => location.reload(), 400); }}
+    else showToast(d.error || 'Ошибка', true);
+  }} catch(e) {{ showToast('Сеть: ' + e.message, true); }}
+}}
+
 async function detachOne(workerId, workerName) {{
   if (!confirm(`Открепить ${{workerName}}?`)) return;
   try {{
@@ -168,6 +218,25 @@ def render_object_detail(object_id: int, user: str) -> str | None:
     is_deleted = obj["deleted_at"] is not None
     attached = get_workers_of_object(object_id, include_deleted=False)
     attached_ids = [w["id"] for w in attached]
+    comments = get_object_comments(object_id)
+    if comments:
+        cards = []
+        for c in comments:
+            created = dt.datetime.fromisoformat(c["created_at"])
+            cards.append(
+                f'<div class="comment-card">'
+                f'<div class="comment-meta">'
+                f'<span class="comment-author">👤 {html.escape(c["author"])}</span>'
+                f'<span class="comment-date">{created.strftime("%d.%m.%Y %H:%M")}</span>'
+                f'<button class="btn btn-sm btn-danger" '
+                f'onclick="deleteComment({c["id"]})">× Удалить</button>'
+                f'</div>'
+                f'<div class="comment-body">{html.escape(c["text"])}</div>'
+                f'</div>'
+            )
+        comments_html = "\n".join(cards)
+    else:
+        comments_html = '<p class="text-sm-muted">Заметок пока нет</p>'
 
     all_workers = get_workers(include_deleted=False)
     workers_data = [{"id": w["id"], "name": w["name"]} for w in all_workers]
@@ -209,6 +278,8 @@ def render_object_detail(object_id: int, user: str) -> str | None:
         worker_rows="\n".join(worker_rows) if worker_rows else
             '<tr><td colspan="4" class="empty-cell">'
             'Никто не прикреплён. Нажми «👥 Прикрепить работников»</td></tr>',
+        comments_html=comments_html,
+        comments_count=len(comments),
         object_id=object_id,
         workers_json=json.dumps(workers_data, ensure_ascii=False),
         attached_ids=json.dumps(attached_ids),

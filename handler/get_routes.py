@@ -4,7 +4,8 @@ from pathlib import Path
 from views import (
     render_login, render_dashboard, render_workers,
     render_worker_profile, render_my_page,
-    render_objects, render_object_detail, render_csv,
+    render_objects, render_object_detail, render_csv, render_xlsx,
+    render_users,
 )
 from sessions import get_session
 
@@ -71,6 +72,7 @@ class GetRoutesMixin:
                 break
 
         is_worker_role = session_data and session_data.get("role") == "worker"
+        is_accountant_role = bool(session_data and session_data.get("role") == "accountant")
 
         if path in ("/", ""):
             if is_worker_role:
@@ -85,7 +87,7 @@ class GetRoutesMixin:
                 search = self._qs_get("search", "")
                 custom_from = self._qs_get("from", "")
                 custom_to = self._qs_get("to", "")
-                self._send(200, render_dashboard(period, search, user, custom_from, custom_to))
+                self._send(200, render_dashboard(period, search, user, custom_from, custom_to, is_accountant=is_accountant_role))
             return
 
         if path == "/my":
@@ -99,6 +101,16 @@ class GetRoutesMixin:
 
         if is_worker_role:
             self._send(403, "<h1>403 — доступ закрыт</h1>")
+            return
+
+        if path == "/api/object_comments":
+            object_id = self._qs_get("object_id", "")
+            if not object_id.isdigit():
+                self._send_json({"error": "bad id"}, 400)
+                return
+            from db.comments import get_object_comments
+            comments = [dict(c) for c in get_object_comments(int(object_id))]
+            self._send_json({"ok": True, "comments": comments})
             return
 
         if path == "/api/shift_comments":
@@ -145,15 +157,41 @@ class GetRoutesMixin:
             self._send(200, body)
             return
 
+        if path == "/users":
+            if is_accountant_role:
+                self._send(403, "<h1>403 — доступ закрыт</h1>")
+                return
+            self._send(200, render_users(user))
+            return
+
         if path == "/export":
             period = self._qs_get("period", "week")
             custom_from = self._qs_get("from", "")
             custom_to = self._qs_get("to", "")
-            data = render_csv(period, custom_from, custom_to)
+            search = self._qs_get("search", "")
+            data = render_csv(period, custom_from, custom_to, search)
             self.send_response(200)
             self.send_header("Content-Type", "text/csv; charset=utf-8")
             self.send_header("Content-Disposition",
                              f'attachment; filename="shifts_{period}.csv"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        if path == "/export_xlsx":
+            period = self._qs_get("period", "week")
+            custom_from = self._qs_get("from", "")
+            custom_to = self._qs_get("to", "")
+            search = self._qs_get("search", "")
+            data = render_xlsx(period, custom_from, custom_to, search)
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="shifts_{period}.xlsx"')
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)

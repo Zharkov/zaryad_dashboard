@@ -1,5 +1,4 @@
 import os
-import sys
 import datetime as dt
 from pathlib import Path
 
@@ -22,25 +21,6 @@ def _load_dotenv():
 _load_dotenv()
 
 DB_PATH = os.environ.get("WORKTIME_DB", str(Path(__file__).parent / "worktime.db"))
-
-_users_raw = os.environ.get("WEB_USERS", "").strip()
-USERS: dict[str, str] = {}
-if _users_raw:
-    for _pair in _users_raw.split(","):
-        _pair = _pair.strip()
-        if ":" not in _pair:
-            continue
-        _u, _p = _pair.split(":", 1)
-        USERS[_u.strip()] = _p.strip()
-else:
-    _legacy_user = os.environ.get("WEB_USER", "").strip()
-    _legacy_pass = os.environ.get("WEB_PASS", "").strip()
-    if _legacy_user and _legacy_pass:
-        USERS[_legacy_user] = _legacy_pass
-
-if not USERS:
-    print("Предупреждение: WEB_USERS не задан в .env (используются администраторы из БД)",
-          file=sys.stderr)
 
 PORT = int(os.environ.get("WEB_PORT", "9090"))
 HOST = os.environ.get("WEB_HOST", "0.0.0.0")

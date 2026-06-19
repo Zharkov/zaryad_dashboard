@@ -101,6 +101,30 @@ def authenticate_worker(login: str, password: str) -> int | None:
     return worker_id
 
 
+def set_worker_password(worker_id: int, password: str, user: str) -> bool:
+    with db_conn() as c:
+        cur = c.execute(
+            "UPDATE worker_credentials SET password_plain = ?, updated_at = ? WHERE worker_id = ?",
+            (password, now_msk().isoformat(), worker_id),
+        )
+        if cur.rowcount > 0:
+            audit(c, "set_worker_password", None, {"worker_id": worker_id}, user)
+            return True
+    return False
+
+
+def get_workers_with_access() -> list:
+    """Workers who have login credentials, joined with worker name."""
+    with db_conn() as c:
+        return list(c.execute(
+            "SELECT w.id, w.name, wc.blocked, wc.created_at "
+            "FROM workers w "
+            "JOIN worker_credentials wc ON w.id = wc.worker_id "
+            "WHERE w.deleted_at IS NULL "
+            "ORDER BY w.name"
+        ))
+
+
 def get_all_worker_credentials() -> dict[int, dict]:
     with db_conn() as c:
         out = {}

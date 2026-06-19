@@ -2,13 +2,16 @@ from db.conn import db_conn
 from utils import now_msk
 
 
-def authenticate_admin(username: str, password: str) -> bool:
+def authenticate_admin(username: str, password: str) -> str | None:
+    """Returns role ('admin' or 'accountant') if credentials match, else None."""
     with db_conn() as c:
         row = c.execute(
-            "SELECT password_plain FROM admin_users WHERE username = ?",
+            "SELECT password_plain, role FROM admin_users WHERE username = ?",
             (username,),
         ).fetchone()
-    return row is not None and row["password_plain"] == password
+    if row and row["password_plain"] == password:
+        return row["role"] or "admin"
+    return None
 
 
 def get_admin_count() -> int:
@@ -19,16 +22,18 @@ def get_admin_count() -> int:
 def list_admins() -> list:
     with db_conn() as c:
         return list(c.execute(
-            "SELECT id, username, created_at FROM admin_users ORDER BY username"
+            "SELECT id, username, role, created_at FROM admin_users ORDER BY username"
         ))
 
 
-def add_admin(username: str, password: str) -> tuple[bool, str]:
+def add_admin(username: str, password: str, role: str = "admin") -> tuple[bool, str]:
+    if role not in ("admin", "accountant"):
+        return False, f"Неизвестная роль: {role}"
     try:
         with db_conn() as c:
             c.execute(
-                "INSERT INTO admin_users (username, password_plain, created_at) VALUES (?, ?, ?)",
-                (username, password, now_msk().isoformat()),
+                "INSERT INTO admin_users (username, password_plain, role, created_at) VALUES (?, ?, ?, ?)",
+                (username, password, role, now_msk().isoformat()),
             )
         return True, "OK"
     except Exception as e:
@@ -46,6 +51,17 @@ def delete_admin(username: str) -> bool:
     return True
 
 
+def change_role(username: str, new_role: str) -> bool:
+    if new_role not in ("admin", "accountant"):
+        return False
+    with db_conn() as c:
+        row = c.execute("SELECT id FROM admin_users WHERE username = ?", (username,)).fetchone()
+        if not row:
+            return False
+        c.execute("UPDATE admin_users SET role = ? WHERE username = ?", (new_role, username))
+    return True
+
+
 def change_password(username: str, new_password: str) -> bool:
     with db_conn() as c:
         row = c.execute(
@@ -58,12 +74,3 @@ def change_password(username: str, new_password: str) -> bool:
             (new_password, username),
         )
     return True
-
-
-def bootstrap_from_env(users: dict) -> int:
-    count = 0
-    for username, password in users.items():
-        ok, _ = add_admin(username, password)
-        if ok:
-            count += 1
-    return count

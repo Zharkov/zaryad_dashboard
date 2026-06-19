@@ -3,9 +3,9 @@ import sys
 import threading
 from http.server import ThreadingHTTPServer
 
-from config import HOST, PORT, USERS
+from config import HOST, PORT
 from db.conn import db_migrate
-from db.admin_users import get_admin_count, bootstrap_from_env
+from db.admin_users import get_admin_count
 from sessions import cleanup_sessions_loop
 from handler import Handler
 
@@ -14,17 +14,12 @@ def main():
     db_migrate()
 
     if get_admin_count() == 0:
-        if USERS:
-            count = bootstrap_from_env(USERS)
-            print(f"✓ Перенесено {count} администраторов из .env в БД.")
-            print("  Теперь можно удалить WEB_USERS из .env")
-        else:
-            print(
-                "ERROR: нет администраторов. Задай WEB_USERS=логин:пароль в .env "
-                "для первого запуска, или добавь через manage_admins.py",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+        print(
+            "ERROR: нет администраторов в БД. "
+            "Добавь через: python manage_admins.py add <логин> <пароль>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     t = threading.Thread(target=cleanup_sessions_loop, daemon=True)
     t.start()
