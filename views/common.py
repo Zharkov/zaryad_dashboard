@@ -35,13 +35,35 @@ def topbar(active: str, user: str, role: str = "admin") -> str:
         <div class="sub">Табель</div>
       </div>
     </a>
-    <div class="nav">{nav}</div>
+    <div class="nav" id="mainNav">{nav}</div>
     <div class="user-info">
       <span>👤 {_html.escape(user)}</span>
       <a href="/logout">Выйти</a>
     </div>
+    <button class="burger" id="burgerBtn" aria-label="Меню">☰</button>
   </div>
 </div>
+<button class="scroll-top" id="scrollTopBtn" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" title="Наверх">↑</button>
+<script>
+(function(){{
+  var nav = document.getElementById('mainNav');
+  var burger = document.getElementById('burgerBtn');
+  burger.addEventListener('click', function(e){{
+    e.stopPropagation();
+    nav.classList.toggle('open');
+  }});
+  nav.querySelectorAll('a').forEach(function(a){{
+    a.addEventListener('click', function(){{ nav.classList.remove('open'); }});
+  }});
+  document.addEventListener('click', function(e){{
+    if (!nav.contains(e.target) && e.target !== burger) nav.classList.remove('open');
+  }});
+  var scrollBtn = document.getElementById('scrollTopBtn');
+  window.addEventListener('scroll', function(){{
+    scrollBtn.classList.toggle('visible', window.scrollY > 300);
+  }}, {{passive: true}});
+}})();
+</script>
 """
 
 

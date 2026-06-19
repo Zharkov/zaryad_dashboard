@@ -65,11 +65,11 @@ _DASHBOARD_HTML = """<!doctype html>
 <h2>Тренд по дням</h2>
 <div class="chart-box"><canvas id="byDay"></canvas></div>
 
-<h2>{detail_title}</h2>
+<h2 id="detail">{detail_title}</h2>
 <form method="GET" action="/" class="mb-sm">
   <input type="hidden" name="period" value="{period}">
   <input class="search" type="text" name="search" placeholder="🔍 Поиск по имени работника..."
-         value="{search_value}" oninput="this.form.submit()">
+         value="{search_value}" oninput="debouncedSearch(this.value)">
 </form>
 <div class="filter-bar">
   <div class="filter-chips">
@@ -214,6 +214,22 @@ const WORKERS = {workers_json};
 const IS_ACCOUNTANT = {is_accountant_js};
 let massAction = "arr";
 let editingShiftId = null;
+
+let _searchTimer = null;
+function debouncedSearch(val) {{
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(function() {{
+    const u = new URL(location.href);
+    if (val) u.searchParams.set('search', val);
+    else u.searchParams.delete('search');
+    location.href = u.toString() + '#detail';
+  }}, 450);
+}}
+
+if (location.hash === '#detail') {{
+  history.replaceState(null, '', location.pathname + location.search);
+  document.getElementById('detail').scrollIntoView({{block: 'start'}});
+}}
 
 function showToast(msg, isError) {{
   const t = document.getElementById("toast");
