@@ -70,6 +70,10 @@ class PostRoutesMixin:
             "/api/set_object_workers": self._api_set_object_workers,
             "/api/set_worker_objects": self._api_set_worker_objects,
             "/api/detach_worker": self._api_detach_worker,
+            "/api/add_comment": self._api_add_comment,
+            "/api/delete_comment": self._api_delete_comment,
+            "/api/add_shift_comment": self._api_add_shift_comment,
+            "/api/delete_shift_comment": self._api_delete_shift_comment,
         }
 
         handler = ADMIN_ROUTES.get(path)
@@ -455,3 +459,57 @@ class PostRoutesMixin:
             return
         detach_worker_from_object(wid, oid, admin)
         self._send_json({"ok": True})
+
+    def _api_add_comment(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        worker_id = data.get("worker_id")
+        text = (data.get("text") or "").strip()
+        if not worker_id or not text:
+            self._send_json({"ok": False, "error": "Нет данных"}, 400)
+            return
+        from db.comments import add_comment
+        ok, msg, cid = add_comment(int(worker_id), admin, text)
+        self._send_json({"ok": ok, "id": cid} if ok else {"ok": False, "error": msg})
+
+    def _api_delete_comment(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        comment_id = data.get("id")
+        if not comment_id:
+            self._send_json({"ok": False, "error": "Нет ID"}, 400)
+            return
+        from db.comments import delete_comment
+        ok = delete_comment(int(comment_id))
+        self._send_json({"ok": ok})
+
+    def _api_add_shift_comment(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        shift_id = data.get("shift_id")
+        text = (data.get("text") or "").strip()
+        if not shift_id or not text:
+            self._send_json({"ok": False, "error": "Нет данных"}, 400)
+            return
+        from db.comments import add_shift_comment
+        ok, msg, cid = add_shift_comment(int(shift_id), admin, text)
+        self._send_json({"ok": ok, "id": cid} if ok else {"ok": False, "error": msg})
+
+    def _api_delete_shift_comment(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        comment_id = data.get("id")
+        if not comment_id:
+            self._send_json({"ok": False, "error": "Нет ID"}, 400)
+            return
+        from db.comments import delete_shift_comment
+        ok = delete_shift_comment(int(comment_id))
+        self._send_json({"ok": ok})

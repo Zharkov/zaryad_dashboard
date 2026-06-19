@@ -1,7 +1,7 @@
 import html
 import json
 
-from views.common import COMMON_CSS, topbar
+from views.common import topbar
 from db.workers import get_workers
 from db.credentials import get_all_worker_credentials
 
@@ -10,7 +10,7 @@ _WORKERS_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · Работники</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>{css}</style>
+<link rel="stylesheet" href="/static/style.css">
 </head><body>
 {topbar}
 <div class="container">
@@ -20,12 +20,12 @@ _WORKERS_PAGE = """<!doctype html>
   <button class="btn btn-primary" onclick="openAddWorker()">➕ Добавить работника</button>
 </div>
 
-<form method="GET" action="/workers" style="margin-bottom:12px;">
+<form method="GET" action="/workers" class="mb-md">
   <input class="search" type="text" name="search" placeholder="🔍 Поиск..."
          value="{search_value}" oninput="this.form.submit()">
 </form>
 
-<div style="overflow-x:auto;">
+<div class="scroll-x">
 <table>
   <thead><tr><th>Имя</th><th>График</th><th>Статус</th><th>Доступ к сайту</th><th>Действия</th></tr></thead>
   <tbody>
@@ -41,24 +41,21 @@ _WORKERS_PAGE = """<!doctype html>
 <div class="modal-bg" id="modalAddW" onclick="if(event.target===this)closeAddW()">
   <div class="modal narrow">
     <h3>➕ Добавить работника</h3>
-    <div style="margin-bottom:10px;">
-      <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">ФИО:</label>
-      <input type="text" id="addWName" placeholder="Иванов Иван"
-             style="width:100%; background:var(--bg); border:1px solid var(--border);
-                    border-radius:6px; padding:8px 12px; color:var(--text);
-                    font-size:14px; font-family:inherit;">
+    <div class="mb-field">
+      <label class="field-label">ФИО:</label>
+      <input type="text" id="addWName" placeholder="Иванов Иван" class="input-full">
     </div>
-    <div class="row" style="gap:12px;">
-      <div style="flex:1;">
-        <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">Приход:</label>
-        <input type="time" id="addWStart" value="09:00" style="width:100%;">
+    <div class="row gap-md">
+      <div class="flex-1">
+        <label class="field-label">Приход:</label>
+        <input type="time" id="addWStart" value="09:00" class="w-full">
       </div>
-      <div style="flex:1;">
-        <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">Уход:</label>
-        <input type="time" id="addWEnd" value="17:00" style="width:100%;">
+      <div class="flex-1">
+        <label class="field-label">Уход:</label>
+        <input type="time" id="addWEnd" value="17:00" class="w-full">
       </div>
     </div>
-    <div style="font-size:12px; color:var(--muted); margin-top:8px;">
+    <div class="hint">
       График можно потом изменить кнопкой ✏️ рядом с работником.
     </div>
     <div class="footer-btns">
@@ -71,24 +68,21 @@ _WORKERS_PAGE = """<!doctype html>
 <div class="modal-bg" id="modalEditW" onclick="if(event.target===this)closeEditW()">
   <div class="modal narrow">
     <h3 id="editWTitle">Редактирование работника</h3>
-    <div style="margin-bottom:10px;">
-      <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">ФИО:</label>
-      <input type="text" id="editWName"
-             style="width:100%; background:var(--bg); border:1px solid var(--border);
-                    border-radius:6px; padding:8px 12px; color:var(--text);
-                    font-size:14px; font-family:inherit;">
+    <div class="mb-field">
+      <label class="field-label">ФИО:</label>
+      <input type="text" id="editWName" class="input-full">
     </div>
-    <div class="row" style="gap:12px;">
-      <div style="flex:1;">
-        <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">Приход:</label>
-        <input type="time" id="editWStart" style="width:100%;">
+    <div class="row gap-md">
+      <div class="flex-1">
+        <label class="field-label">Приход:</label>
+        <input type="time" id="editWStart" class="w-full">
       </div>
-      <div style="flex:1;">
-        <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">Уход:</label>
-        <input type="time" id="editWEnd" style="width:100%;">
+      <div class="flex-1">
+        <label class="field-label">Уход:</label>
+        <input type="time" id="editWEnd" class="w-full">
       </div>
     </div>
-    <div style="font-size:12px; color:var(--muted); margin-top:8px;">
+    <div class="hint">
       Переименование сохранит всю историю смен — они привязаны к id, не к имени.<br>
       Изменение графика повлияет только на новые «как обычно» отметки.
     </div>
@@ -279,12 +273,12 @@ def render_workers(search: str, user: str) -> str:
                  else '<span class="pill early">активен</span>'
         name_link = f'<a href="/worker?id={w["id"]}">{html.escape(w["name"])}</a>'
         if is_deleted:
-            name_link = f'<span style="text-decoration:line-through; color:var(--muted);">{name_link}</span>'
+            name_link = f'<span class="strike">{name_link}</span>'
 
         name_for_js = html.escape(json.dumps(w["name"], ensure_ascii=False), quote=True)
 
         if is_deleted:
-            access_cell = '<span style="color:var(--muted); font-size:12px;">—</span>'
+            access_cell = '<span class="text-xs-muted">—</span>'
         else:
             c = creds.get(w["id"])
             if not c:
@@ -298,29 +292,29 @@ def render_workers(search: str, user: str) -> str:
                 blocked_pill = ('<span class="pill very-late" style="margin-left:6px;">'
                                 '🚫 блок</span>' if c["blocked"] else '')
                 access_cell = (
-                    f'<div style="display:flex; flex-direction:column; gap:4px;">'
-                    f'<div style="font-size:12px;">'
-                    f'<span style="color:var(--muted);">логин:</span> '
-                    f'<code style="background:var(--bg); padding:1px 6px; border-radius:3px;">{w["id"]}</code>'
+                    f'<div class="cred-cell">'
+                    f'<div class="text-xs-muted">'
+                    f'<span class="text-xs-muted">логин:</span> '
+                    f'<code class="code-tag">{w["id"]}</code>'
                     f'</div>'
-                    f'<div style="font-size:12px;">'
-                    f'<span style="color:var(--muted);">пароль:</span> '
-                    f'<code id="pw_{w["id"]}" style="background:var(--bg); padding:1px 6px; border-radius:3px; user-select:all; cursor:pointer;" '
+                    f'<div class="text-xs-muted">'
+                    f'<span class="text-xs-muted">пароль:</span> '
+                    f'<code id="pw_{w["id"]}" class="code-copy" '
                     f'onclick="copyPw({w["id"]})" title="Клик чтобы скопировать">{pw}</code>'
                     f'{blocked_pill}'
                     f'</div>'
-                    f'<div style="display:flex; gap:4px; margin-top:4px;">'
-                    f'<button class="btn btn-sm" style="padding:2px 8px; font-size:11px;" '
+                    f'<div class="cred-btns">'
+                    f'<button class="btn btn-sm" '
                     f'onclick="resetAccess({w["id"]}, {name_for_js})">🔄 Сбросить</button>'
                 )
                 if c["blocked"]:
                     access_cell += (
-                        f'<button class="btn btn-sm" style="padding:2px 8px; font-size:11px;" '
+                        f'<button class="btn btn-sm" '
                         f'onclick="unblockAccess({w["id"]}, {name_for_js})">✅ Разблокировать</button>'
                     )
                 else:
                     access_cell += (
-                        f'<button class="btn btn-sm btn-danger" style="padding:2px 8px; font-size:11px;" '
+                        f'<button class="btn btn-sm btn-danger" '
                         f'onclick="blockAccess({w["id"]}, {name_for_js})">🚫 Заблокировать</button>'
                     )
                 access_cell += '</div></div>'
@@ -351,10 +345,9 @@ def render_workers(search: str, user: str) -> str:
         )
 
     return _WORKERS_PAGE.format(
-        css=COMMON_CSS,
         topbar=topbar("workers", user),
         search_value=html.escape(search),
         rows="\n".join(rows) if rows else
-            '<tr><td colspan="5" style="text-align:center;color:var(--muted);">Нет</td></tr>',
+            '<tr><td colspan="5" class="empty-cell">Нет</td></tr>',
         total=len(all_workers),
     )

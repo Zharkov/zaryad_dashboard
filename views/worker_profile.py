@@ -2,11 +2,12 @@ import datetime as dt
 import html
 import json
 
-from views.common import COMMON_CSS, topbar, render_heatmap
+from views.common import topbar, render_heatmap
 from db.workers import get_worker_by_id
 from db.shifts import get_all_shifts_for_worker
 from db.objects import get_objects
 from db.attachments import get_objects_of_worker
+from db.comments import get_comments
 from utils import shift_hours, lateness, now_msk, hhmm_to_time
 
 _WORKER_PAGE = """<!doctype html>
@@ -15,13 +16,13 @@ _WORKER_PAGE = """<!doctype html>
 <title>ЗАРЯД · {name}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<style>{css}</style>
+<link rel="stylesheet" href="/static/style.css">
 </head><body>
 {topbar}
 <div class="container">
-<a href="/" style="font-size:13px; color:var(--muted);">← Дашборд</a>
+<a href="/" class="text-sm-muted">← Дашборд</a>
 <h1>{name_html}</h1>
-<p style="color:var(--muted); margin-top:-8px;">
+<p class="subtitle">
   График: {schedule} {status_pill}
 </p>
 
@@ -38,9 +39,8 @@ _WORKER_PAGE = """<!doctype html>
 </div>
 
 <h2>📍 Объекты ({attached_count})</h2>
-<div style="background:var(--surf); padding:12px 14px; border-radius:8px;
-            border:1px solid var(--border); margin-bottom:16px;">
-  <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+<div class="info-block mb-lg">
+  <div class="flex-row">
     {attached_objects_pills}
     <button class="btn btn-sm btn-primary" onclick="openAttachObj()">📍 Прикрепить</button>
   </div>
@@ -52,38 +52,53 @@ _WORKER_PAGE = """<!doctype html>
 <h2>По месяцам</h2>
 <div class="chart-box"><canvas id="byMonth"></canvas></div>
 
-<h2>История смен · клик для правки</h2>
-<div style="overflow-x:auto;">
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('shifts', this)">📋 История смен</button>
+  <button class="tab-btn" onclick="switchTab('comments', this)">💬 Комментарии ({comments_count})</button>
+</div>
+
+<div id="tab_shifts" class="tab-panel active">
+<div class="scroll-x">
 <table>
   <thead><tr><th>Дата</th><th>Приход</th><th>Уход</th><th>Часы</th><th>Пометка</th><th></th></tr></thead>
   <tbody>{rows}</tbody>
 </table>
 </div>
-
 <div class="footer">{name} · {total_shifts} смен</div>
+</div>
+
+<div id="tab_comments" class="tab-panel">
+  <div id="commentsBlock">{comments_html}</div>
+  <div class="mt-sm">
+    <textarea id="commentText" class="textarea-full mb-sm" rows="3"
+              placeholder="Написать комментарий для внутреннего пользования..."></textarea>
+    <button class="btn btn-primary" onclick="submitComment()">💬 Добавить</button>
+  </div>
+</div>
+
 </div>
 
 <div class="modal-bg" id="modalAddShift" onclick="if(event.target===this)closeAddShift()">
   <div class="modal narrow">
     <h3>📝 Добавить смену · {name}</h3>
-    <div class="row" style="flex-wrap:wrap; gap:10px;">
+    <div class="row flex-wrap">
       <div>
-        <label style="display:block; font-size:12px; color:var(--muted);">Дата:</label>
+        <label class="field-label">Дата:</label>
         <input type="date" id="asDate">
       </div>
       <div>
-        <label style="display:block; font-size:12px; color:var(--muted);">Приход:</label>
+        <label class="field-label">Приход:</label>
         <input type="time" id="asArr" value="{default_start}">
       </div>
       <div>
-        <label style="display:block; font-size:12px; color:var(--muted);">Уход:</label>
+        <label class="field-label">Уход:</label>
         <input type="time" id="asLeft" value="{default_end}">
       </div>
     </div>
-    <div style="font-size:12px; color:var(--muted); margin-top:10px;">
+    <div class="hint">
       Время прихода/ухода взято из графика. Уход можно стереть — смена будет открытой.
     </div>
-    <div style="font-size:12px; color:var(--warn); margin-top:6px;">
+    <div class="hint-warn">
       ⚠ Если запись за эту дату уже есть — добавление не пройдёт. Открой её в детализации для редактирования.
     </div>
     <div class="footer-btns">
@@ -97,23 +112,21 @@ _WORKER_PAGE = """<!doctype html>
   <div class="modal narrow">
     <h3 id="editTitlePF">Редактирование смены</h3>
     <div class="row">
-      <label style="width:80px;">Приход:</label>
+      <label class="label-w">Приход:</label>
       <input type="time" id="editArrPF">
     </div>
     <div class="row">
-      <label style="width:80px;">Уход:</label>
+      <label class="label-w">Уход:</label>
       <input type="time" id="editLeftPF">
     </div>
-    <div style="color:var(--muted); font-size:12px; margin-top:8px;">
+    <div class="hint">
       Оставь поле пустым чтобы не менять
     </div>
-    <div id="editReopenBoxPF" style="margin-top:10px; padding:10px;
-         background:rgba(255, 214, 10, 0.08); border-radius:6px;
-         border-left:3px solid var(--brand); display:none;">
-      <div style="font-size:13px; margin-bottom:8px;">
+    <div id="editReopenBoxPF" class="reopen-box">
+      <div class="modal-note">
         Сделать смену снова открытой? Уход будет стёрт, работник станет «на работе».
       </div>
-      <button class="btn btn-sm" onclick="reopenShiftPF()" style="background:var(--brand); color:#000;">
+      <button class="btn btn-sm btn-primary" onclick="reopenShiftPF()">
         🕘 Снова открыть смену
       </button>
     </div>
@@ -128,15 +141,15 @@ _WORKER_PAGE = """<!doctype html>
 <div class="modal-bg" id="modalAttachObj" onclick="if(event.target===this)closeAttachObj()">
   <div class="modal">
     <h3>📍 Прикрепить {name} к объектам</h3>
-    <p style="color:var(--muted); font-size:13px;">
+    <p class="text-sm-muted">
       Отметь объекты к которым работник прикреплён. Сними галку — открепить.
     </p>
-    <div style="display:flex; gap:8px; margin: 8px 0;">
+    <div class="search-row">
       <input class="search" id="aoSearch" type="text" placeholder="🔍 Поиск..."
-             oninput="aoRender()" style="margin:0;">
+             oninput="aoRender()">
     </div>
     <div class="workers-grid" id="aoGrid"></div>
-    <div style="font-size:12px; color:var(--muted);" id="aoCount">Выбрано: 0</div>
+    <div class="hint" id="aoCount">Выбрано: 0</div>
     <div class="footer-btns">
       <button class="btn" onclick="closeAttachObj()">Отмена</button>
       <button class="btn btn-primary" onclick="submitAttachObj()">Сохранить</button>
@@ -257,6 +270,40 @@ async function submitAddShift() {{
       showToast(data.error || "Ошибка", true);
     }}
   }} catch (e) {{ showToast("Сеть: " + e.message, true); }}
+}}
+
+function switchTab(name, btn) {{
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab_' + name).classList.add('active');
+}}
+
+async function submitComment() {{
+  const text = document.getElementById('commentText').value.trim();
+  if (!text) {{ showToast('Введи текст', true); return; }}
+  try {{
+    const r = await fetch('/api/add_comment', {{
+      method: 'POST', headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{worker_id: WORKER_ID, text}}),
+    }});
+    const d = await r.json();
+    if (d.ok) {{ showToast('Добавлено'); setTimeout(() => location.reload(), 400); }}
+    else showToast(d.error || 'Ошибка', true);
+  }} catch(e) {{ showToast('Сеть: ' + e.message, true); }}
+}}
+
+async function deleteComment(id) {{
+  if (!confirm('Удалить комментарий?')) return;
+  try {{
+    const r = await fetch('/api/delete_comment', {{
+      method: 'POST', headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{id}}),
+    }});
+    const d = await r.json();
+    if (d.ok) {{ showToast('Удалено'); setTimeout(() => location.reload(), 400); }}
+    else showToast(d.error || 'Ошибка', true);
+  }} catch(e) {{ showToast('Сеть: ' + e.message, true); }}
 }}
 
 let editingShiftIdPF = null;
@@ -413,7 +460,7 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
             f"{name_js},{date_js})"
         )
         edit_btn = (
-            f'<button class="btn btn-sm" style="padding:3px 10px; font-size:12px;" '
+            f'<button class="btn btn-sm" '
             f'onclick="event.stopPropagation(); {click_handler}">✏️ Изменить</button>'
         )
         rows.append(
@@ -435,7 +482,7 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
     status_pill = ('<span class="pill very-late">удалён</span>' if is_deleted else '')
     name_html = html.escape(worker["name"])
     if is_deleted:
-        name_html = f'<span style="text-decoration:line-through; color:var(--muted);">{name_html}</span>'
+        name_html = f'<span class="strike">{name_html}</span>'
 
     attached_objects = get_objects_of_worker(worker_id, include_deleted=False)
     attached_obj_ids = [o["id"] for o in attached_objects]
@@ -444,19 +491,35 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
 
     if attached_objects:
         pills_html = " ".join(
-            f'<a href="/object?id={o["id"]}" class="pill" '
-            f'style="background:rgba(255, 214, 10, 0.15); color:var(--brand); '
-            f'text-decoration:none; padding:4px 12px;">📍 {html.escape(o["name"])}</a>'
+            f'<a href="/object?id={o["id"]}" class="obj-tag">📍 {html.escape(o["name"])}</a>'
             for o in attached_objects
         )
     else:
         pills_html = (
-            '<span style="color:var(--muted); font-size:13px;">'
-            'Не прикреплён ни к одному объекту</span>'
+            '<span class="text-sm-muted">Не прикреплён ни к одному объекту</span>'
         )
 
+    comments = get_comments(worker_id)
+    if comments:
+        cards = []
+        for c in comments:
+            created = dt.datetime.fromisoformat(c["created_at"])
+            cards.append(
+                f'<div class="comment-card">'
+                f'<div class="comment-meta">'
+                f'<span class="comment-author">👤 {html.escape(c["author"])}</span>'
+                f'<span class="comment-date">{created.strftime("%d.%m.%Y %H:%M")}</span>'
+                f'<button class="btn btn-sm btn-danger" '
+                f'onclick="deleteComment({c["id"]})">× Удалить</button>'
+                f'</div>'
+                f'<div class="comment-body">{html.escape(c["text"])}</div>'
+                f'</div>'
+            )
+        comments_html = "\n".join(cards)
+    else:
+        comments_html = '<p class="text-sm-muted">Комментариев пока нет</p>'
+
     return _WORKER_PAGE.format(
-        css=COMMON_CSS,
         topbar=topbar("workers", user),
         name=html.escape(worker["name"]),
         name_html=name_html,
@@ -476,8 +539,10 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
         attached_obj_ids=json.dumps(attached_obj_ids),
         heatmap="\n".join(heatmap_cells),
         rows="\n".join(rows) if rows else
-            '<tr><td colspan="6" style="text-align:center;color:var(--muted);">Нет смен</td></tr>',
+            '<tr><td colspan="6" class="empty-cell">Нет смен</td></tr>',
         by_month_labels=json.dumps(bm_labels),
         by_month_data=json.dumps(bm_data),
         total_shifts=len(all_shifts),
+        comments_html=comments_html,
+        comments_count=len(comments),
     )

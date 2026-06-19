@@ -1,4 +1,5 @@
 import urllib.parse
+from pathlib import Path
 
 from views import (
     render_login, render_dashboard, render_workers,
@@ -7,11 +8,34 @@ from views import (
 )
 from sessions import get_session
 
+_STATIC_DIR = Path(__file__).parent.parent / "static"
+_MIME = {".css": "text/css", ".js": "application/javascript",
+         ".png": "image/png", ".svg": "image/svg+xml",
+         ".ico": "image/x-icon", ".woff2": "font/woff2"}
+
 
 class GetRoutesMixin:
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
+
+        if path.startswith("/static/"):
+            filename = path[len("/static/"):]
+            if not filename or "/" in filename or ".." in filename:
+                self._not_found()
+                return
+            file_path = _STATIC_DIR / filename
+            if not file_path.exists():
+                self._not_found()
+                return
+            ctype = _MIME.get(file_path.suffix, "application/octet-stream")
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Cache-Control", "max-age=3600")
+            self.send_header("Content-Length", str(file_path.stat().st_size))
+            self.end_headers()
+            self.wfile.write(file_path.read_bytes())
+            return
 
         if path == "/login":
             self._send(200, render_login())
@@ -75,6 +99,16 @@ class GetRoutesMixin:
 
         if is_worker_role:
             self._send(403, "<h1>403 — доступ закрыт</h1>")
+            return
+
+        if path == "/api/shift_comments":
+            shift_id = self._qs_get("shift_id", "")
+            if not shift_id.isdigit():
+                self._send_json({"error": "bad id"}, 400)
+                return
+            from db.comments import get_shift_comments
+            comments = [dict(c) for c in get_shift_comments(int(shift_id))]
+            self._send_json({"ok": True, "comments": comments})
             return
 
         if path == "/workers":

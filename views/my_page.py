@@ -2,7 +2,7 @@ import datetime as dt
 import html
 import json
 
-from views.common import COMMON_CSS, render_heatmap
+from views.common import render_heatmap
 from db.workers import get_worker_by_id
 from db.shifts import get_all_shifts_for_worker
 from db.attachments import get_objects_of_worker
@@ -14,7 +14,7 @@ _MY_PAGE = """<!doctype html>
 <title>ЗАРЯД · {name}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<style>{css}</style>
+<link rel="stylesheet" href="/static/style.css">
 </head><body>
 
 <div class="topbar">
@@ -33,7 +33,7 @@ _MY_PAGE = """<!doctype html>
         <div class="sub">Личный кабинет</div>
       </div>
     </div>
-    <div style="flex:1;"></div>
+    <div class="flex-1"></div>
     <div class="user-info">
       <span>👤 {name}</span>
       <a href="/logout">Выйти</a>
@@ -44,7 +44,7 @@ _MY_PAGE = """<!doctype html>
 <div class="container">
 
 <h1>{name_html}</h1>
-<p style="color:var(--muted); margin-top:-8px;">
+<p class="subtitle">
   График: {schedule}
 </p>
 
@@ -65,7 +65,7 @@ _MY_PAGE = """<!doctype html>
 <div class="chart-box"><canvas id="byMonth"></canvas></div>
 
 <h2>Мои смены</h2>
-<div style="overflow-x:auto;">
+<div class="scroll-x">
 <table>
   <thead><tr><th>Дата</th><th>Приход</th><th>Уход</th><th>Часы</th><th>Пометка</th></tr></thead>
   <tbody>{rows}</tbody>
@@ -167,22 +167,19 @@ def render_my_page(worker_id: int, user: str) -> str | None:
     attached_objects = get_objects_of_worker(worker_id, include_deleted=False)
     if attached_objects:
         pills_html = " ".join(
-            f'<span class="pill" style="background:rgba(255, 214, 10, 0.15); '
-            f'color:var(--brand); padding:4px 12px;">📍 {html.escape(o["name"])}</span>'
+            f'<span class="obj-tag">📍 {html.escape(o["name"])}</span>'
             for o in attached_objects
         )
         objects_block = (
             f'<h2>📍 Мои объекты</h2>'
-            f'<div style="background:var(--surf); padding:12px 14px; border-radius:8px;'
-            f'border:1px solid var(--border); margin-bottom:16px;">'
-            f'<div style="display:flex; flex-wrap:wrap; gap:8px;">{pills_html}</div>'
+            f'<div class="info-block mb-lg">'
+            f'<div class="flex-wrap">{pills_html}</div>'
             f'</div>'
         )
     else:
         objects_block = ""
 
     return _MY_PAGE.format(
-        css=COMMON_CSS,
         name=html.escape(worker["name"]),
         name_html=html.escape(worker["name"]),
         schedule=f"{worker['default_start']}-{worker['default_end']}",
@@ -194,7 +191,7 @@ def render_my_page(worker_id: int, user: str) -> str | None:
         objects_block=objects_block,
         heatmap="\n".join(heatmap_cells),
         rows="\n".join(rows) if rows else
-            '<tr><td colspan="5" style="text-align:center;color:var(--muted);">Нет смен</td></tr>',
+            '<tr><td colspan="5" class="empty-cell">Нет смен</td></tr>',
         by_month_labels=json.dumps(bm_labels),
         by_month_data=json.dumps(bm_data),
         total_shifts=len(all_shifts),

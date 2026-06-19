@@ -53,6 +53,15 @@ def db_migrate():
         );
         CREATE INDEX IF NOT EXISTS idx_wobj_worker ON worker_objects(worker_id);
         CREATE INDEX IF NOT EXISTS idx_wobj_object ON worker_objects(object_id);
+        CREATE TABLE IF NOT EXISTS worker_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+            author TEXT NOT NULL,
+            text TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            deleted_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_comments_worker ON worker_comments(worker_id);
         CREATE TABLE IF NOT EXISTS worker_credentials (
             worker_id INTEGER PRIMARY KEY REFERENCES workers(id) ON DELETE CASCADE,
             password_plain TEXT NOT NULL,
@@ -60,4 +69,13 @@ def db_migrate():
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS shift_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            shift_id INTEGER NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+            author TEXT NOT NULL,
+            text TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            deleted_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_shift_comments_shift ON shift_comments(shift_id);
         """)

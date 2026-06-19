@@ -1,7 +1,7 @@
 import html
 import json
 
-from views.common import COMMON_CSS, topbar
+from views.common import topbar
 from db.objects import get_objects
 from db.attachments import count_workers_per_object
 
@@ -10,7 +10,7 @@ _OBJECTS_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · Объекты</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>{css}</style>
+<link rel="stylesheet" href="/static/style.css">
 </head><body>
 {topbar}
 <div class="container">
@@ -20,12 +20,12 @@ _OBJECTS_PAGE = """<!doctype html>
   <button class="btn btn-primary" onclick="openAddObject()">➕ Добавить объект</button>
 </div>
 
-<form method="GET" action="/objects" style="margin-bottom:12px;">
+<form method="GET" action="/objects" class="mb-md">
   <input class="search" type="text" name="search" placeholder="🔍 Поиск..."
          value="{search_value}" oninput="this.form.submit()">
 </form>
 
-<div style="overflow-x:auto;">
+<div class="scroll-x">
 <table>
   <thead><tr><th>Название</th><th>Работников</th><th>Описание</th><th>Статус</th><th>Действия</th></tr></thead>
   <tbody>
@@ -41,19 +41,14 @@ _OBJECTS_PAGE = """<!doctype html>
 <div class="modal-bg" id="modalAddO" onclick="if(event.target===this)closeAddO()">
   <div class="modal narrow">
     <h3>➕ Добавить объект</h3>
-    <div style="margin-bottom:10px;">
-      <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">Название:</label>
-      <input type="text" id="addOName" placeholder="Кашена, Центр, Победы 12..."
-             style="width:100%; background:var(--bg); border:1px solid var(--border);
-                    border-radius:6px; padding:8px 12px; color:var(--text);
-                    font-size:14px; font-family:inherit;">
+    <div class="mb-field">
+      <label class="field-label">Название:</label>
+      <input type="text" id="addOName" placeholder="Кашена, Центр, Победы 12..." class="input-full">
     </div>
-    <div style="margin-bottom:10px;">
-      <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">Описание (опционально):</label>
+    <div class="mb-field">
+      <label class="field-label">Описание (опционально):</label>
       <textarea id="addODesc" rows="3" placeholder="Что за объект, кто заказчик и т.п."
-                style="width:100%; background:var(--bg); border:1px solid var(--border);
-                       border-radius:6px; padding:8px 12px; color:var(--text);
-                       font-size:14px; font-family:inherit; resize:vertical;"></textarea>
+                class="textarea-full"></textarea>
     </div>
     <div class="footer-btns">
       <button class="btn" onclick="closeAddO()">Отмена</button>
@@ -65,19 +60,13 @@ _OBJECTS_PAGE = """<!doctype html>
 <div class="modal-bg" id="modalEditO" onclick="if(event.target===this)closeEditO()">
   <div class="modal narrow">
     <h3 id="editOTitle">Редактирование</h3>
-    <div style="margin-bottom:10px;">
-      <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">Название:</label>
-      <input type="text" id="editOName"
-             style="width:100%; background:var(--bg); border:1px solid var(--border);
-                    border-radius:6px; padding:8px 12px; color:var(--text);
-                    font-size:14px; font-family:inherit;">
+    <div class="mb-field">
+      <label class="field-label">Название:</label>
+      <input type="text" id="editOName" class="input-full">
     </div>
-    <div style="margin-bottom:10px;">
-      <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">Описание:</label>
-      <textarea id="editODesc" rows="3"
-                style="width:100%; background:var(--bg); border:1px solid var(--border);
-                       border-radius:6px; padding:8px 12px; color:var(--text);
-                       font-size:14px; font-family:inherit; resize:vertical;"></textarea>
+    <div class="mb-field">
+      <label class="field-label">Описание:</label>
+      <textarea id="editODesc" rows="3" class="textarea-full"></textarea>
     </div>
     <div class="footer-btns">
       <button class="btn" onclick="closeEditO()">Отмена</button>
@@ -187,9 +176,9 @@ def render_objects(search: str, user: str) -> str:
                   else '<span class="pill early">активен</span>')
         name_link = f'<a href="/object?id={o["id"]}">{html.escape(o["name"])}</a>'
         if is_deleted:
-            name_link = f'<span style="text-decoration:line-through; color:var(--muted);">{name_link}</span>'
+            name_link = f'<span class="strike">{name_link}</span>'
         cnt = counts.get(o["id"], 0)
-        cnt_str = f'<a href="/object?id={o["id"]}" style="color:var(--brand);">{cnt}</a>' if cnt else "—"
+        cnt_str = f'<a href="/object?id={o["id"]}" class="text-brand">{cnt}</a>' if cnt else "—"
         desc = html.escape(o["description"] or "")
         if len(desc) > 80:
             desc = desc[:77] + "…"
@@ -212,16 +201,15 @@ def render_objects(search: str, user: str) -> str:
         rows.append(
             f'<tr><td>{name_link}</td>'
             f'<td>{cnt_str}</td>'
-            f'<td style="color:var(--muted);font-size:13px;">{desc}</td>'
+            f'<td class="text-sm-muted">{desc}</td>'
             f'<td>{status}</td><td>{actions}</td></tr>'
         )
 
     return _OBJECTS_PAGE.format(
-        css=COMMON_CSS,
         topbar=topbar("objects", user),
         search_value=html.escape(search),
         rows="\n".join(rows) if rows else
-            '<tr><td colspan="5" style="text-align:center;color:var(--muted);">'
+            '<tr><td colspan="5" class="empty-cell">'
             'Нет объектов. Нажми «➕ Добавить объект»</td></tr>',
         total=len(all_objects),
     )

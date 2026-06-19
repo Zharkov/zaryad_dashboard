@@ -3,9 +3,10 @@ import html
 import json
 import urllib.parse
 
-from views.common import COMMON_CSS, topbar
+from views.common import topbar
 from db.workers import get_workers
 from db.shifts import get_shifts, get_open_shifts
+from db.comments import get_shift_comments_bulk
 from utils import parse_period, now_msk, PERIOD_LABELS, lateness, shift_hours
 
 _DASHBOARD_HTML = """<!doctype html>
@@ -14,7 +15,7 @@ _DASHBOARD_HTML = """<!doctype html>
 <title>ЗАРЯД · Дашборд</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<style>{css}</style>
+<link rel="stylesheet" href="/static/style.css">
 </head><body>
 
 {topbar}
@@ -35,21 +36,17 @@ _DASHBOARD_HTML = """<!doctype html>
 </div>
 
 <div id="calBlock" class="cal-block" style="{cal_display_style}">
-  <form method="GET" action="/" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+  <form method="GET" action="/" class="flex-row">
     <input type="hidden" name="period" value="custom">
-    <label style="font-size:13px; color:var(--muted);">С:</label>
-    <input type="date" name="from" value="{cal_from}" required
-           style="background:var(--bg); border:1px solid var(--border); border-radius:6px;
-                  padding:6px 10px; color:var(--text); font-size:13px; font-family:inherit;">
-    <label style="font-size:13px; color:var(--muted);">По:</label>
-    <input type="date" name="to" value="{cal_to}" required
-           style="background:var(--bg); border:1px solid var(--border); border-radius:6px;
-                  padding:6px 10px; color:var(--text); font-size:13px; font-family:inherit;">
+    <label class="text-sm-muted">С:</label>
+    <input type="date" name="from" value="{cal_from}" required class="input-full">
+    <label class="text-sm-muted">По:</label>
+    <input type="date" name="to" value="{cal_to}" required class="input-full">
     <button type="submit" class="btn btn-primary btn-sm">Показать</button>
   </form>
 </div>
 
-<p style="color: var(--muted); margin-top: -8px; font-size: 13px;">
+<p class="subtitle">
   Период: {date_from} — {date_to}
 </p>
 
@@ -70,12 +67,12 @@ _DASHBOARD_HTML = """<!doctype html>
 <div class="chart-box"><canvas id="byDay"></canvas></div>
 
 <h2>Детализация · клик по строке для правки</h2>
-<form method="GET" action="/" style="margin-bottom:8px;">
+<form method="GET" action="/" class="mb-sm">
   <input type="hidden" name="period" value="{period}">
   <input class="search" type="text" name="search" placeholder="🔍 Поиск по имени работника..."
          value="{search_value}" oninput="this.form.submit()">
 </form>
-<div style="overflow-x:auto;">
+<div class="scroll-x">
 <table>
   <thead><tr><th>Дата</th><th>Работник</th><th>Приход</th><th>Уход</th><th>Часы</th><th>Пометка</th><th></th></tr></thead>
   <tbody>
@@ -84,10 +81,7 @@ _DASHBOARD_HTML = """<!doctype html>
 </table>
 </div>
 
-<div style="background:var(--surf2); padding:10px 14px; border-radius:0 0 8px 8px;
-            margin-top:-1px; font-size:13px; color:var(--text);
-            border:1px solid var(--border); border-top:none;
-            display:{totals_display};">
+<div class="table-footer" style="display:{totals_display};">
   {totals_row}
 </div>
 
@@ -107,13 +101,13 @@ _DASHBOARD_HTML = """<!doctype html>
         <button type="button" onclick="setTimeNow()">Сейчас</button>
       </div>
     </div>
-    <div style="display:flex; gap:8px; margin: 8px 0;">
+    <div class="search-row">
       <input class="search" id="massSearch" type="text" placeholder="🔍 Поиск..."
-             oninput="filterWorkers()" style="margin:0;">
+             oninput="filterWorkers()">
       <button class="btn btn-sm" type="button" onclick="toggleAll()">Все</button>
     </div>
     <div class="workers-grid" id="workersGrid"></div>
-    <div style="font-size:12px; color:var(--muted);" id="selCount">Выбрано: 0</div>
+    <div class="hint" id="selCount">Выбрано: 0</div>
     <div class="footer-btns">
       <button class="btn" onclick="closeMass()">Отмена</button>
       <button class="btn btn-primary" onclick="submitMass()">Отметить</button>
@@ -125,25 +119,31 @@ _DASHBOARD_HTML = """<!doctype html>
   <div class="modal narrow">
     <h3 id="editTitle">Редактирование смены</h3>
     <div class="row">
-      <label style="width:80px;">Приход:</label>
+      <label class="label-w">Приход:</label>
       <input type="time" id="editArr">
     </div>
     <div class="row">
-      <label style="width:80px;">Уход:</label>
+      <label class="label-w">Уход:</label>
       <input type="time" id="editLeft">
     </div>
-    <div style="color:var(--muted); font-size:12px; margin-top:8px;">
+    <div class="hint">
       Оставь поле пустым чтобы не менять
     </div>
-    <div id="editReopenBox" style="margin-top:10px; padding:10px;
-         background:rgba(255, 214, 10, 0.08); border-radius:6px;
-         border-left:3px solid var(--brand); display:none;">
-      <div style="font-size:13px; margin-bottom:8px;">
+    <div id="editReopenBox" class="reopen-box">
+      <div class="modal-note">
         Сделать смену снова открытой? Уход будет стёрт, работник станет «на работе».
       </div>
-      <button class="btn btn-sm" onclick="reopenShift()" style="background:var(--brand); color:#000;">
+      <button class="btn btn-sm btn-primary" onclick="reopenShift()">
         🕘 Снова открыть смену
       </button>
+    </div>
+    <hr style="border:none; border-top:1px solid var(--border); margin:14px 0 10px;">
+    <div style="font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin-bottom:8px;">💬 Комментарии к смене</div>
+    <div id="editShiftComments"></div>
+    <textarea id="editShiftCommentText" class="textarea-full mt-sm mb-sm" rows="2"
+              placeholder="Добавить комментарий..."></textarea>
+    <div class="mb-sm">
+      <button class="btn btn-sm btn-primary" onclick="submitShiftComment()">💬 Добавить</button>
     </div>
     <div class="footer-btns">
       <button class="btn btn-danger" onclick="deleteShift()">🗑 Удалить</button>
@@ -156,31 +156,31 @@ _DASHBOARD_HTML = """<!doctype html>
 <div class="modal-bg" id="modalBackdate" onclick="if(event.target===this)closeBackdate()">
   <div class="modal">
     <h3>📝 Смена за другой день</h3>
-    <div class="row" style="flex-wrap:wrap; gap:12px;">
+    <div class="row flex-wrap">
       <div>
-        <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">Дата:</label>
+        <label class="field-label">Дата:</label>
         <input type="date" id="bdDate">
       </div>
       <div>
-        <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">Приход:</label>
+        <label class="field-label">Приход:</label>
         <input type="time" id="bdArr">
       </div>
       <div>
-        <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:4px;">Уход (можно пусто):</label>
+        <label class="field-label">Уход (можно пусто):</label>
         <input type="time" id="bdLeft">
       </div>
     </div>
-    <div class="time-presets" style="margin-top:8px;">
+    <div class="time-presets mt-sm">
       <button type="button" onclick="bdSetUsual()">⚡ Как обычно (по графику)</button>
     </div>
-    <div style="display:flex; gap:8px; margin: 8px 0;">
+    <div class="search-row">
       <input class="search" id="bdSearch" type="text" placeholder="🔍 Поиск работников..."
-             oninput="bdFilterWorkers()" style="margin:0;">
+             oninput="bdFilterWorkers()">
       <button class="btn btn-sm" type="button" onclick="bdToggleAll()">Все</button>
     </div>
     <div class="workers-grid" id="bdWorkersGrid"></div>
-    <div style="font-size:12px; color:var(--muted);" id="bdSelCount">Выбрано: 0</div>
-    <div style="font-size:12px; color:var(--warn); margin-top:6px;">
+    <div class="hint" id="bdSelCount">Выбрано: 0</div>
+    <div class="hint-warn">
       ⚠ Если у работника уже есть запись на эту дату — она будет пропущена.
     </div>
     <div class="footer-btns">
@@ -445,7 +445,71 @@ function editShift(id, arr, left, name, date) {{
   document.getElementById("editLeft").value = left === "—" ? "" : left;
   const isClosed = left && left !== "—";
   document.getElementById("editReopenBox").style.display = isClosed ? "block" : "none";
+  document.getElementById("editShiftCommentText").value = "";
   document.getElementById("modalEdit").classList.add("show");
+  loadShiftComments(id);
+}}
+
+async function loadShiftComments(shiftId) {{
+  const box = document.getElementById("editShiftComments");
+  box.innerHTML = '<div class="text-sm-muted" style="padding:4px 0">Загрузка...</div>';
+  try {{
+    const r = await fetch("/api/shift_comments?shift_id=" + shiftId);
+    const d = await r.json();
+    if (d.ok) renderShiftComments(d.comments);
+    else box.innerHTML = '<div class="text-sm-muted">Ошибка загрузки</div>';
+  }} catch(e) {{
+    box.innerHTML = '<div class="text-sm-muted">Ошибка сети</div>';
+  }}
+}}
+function renderShiftComments(comments) {{
+  const box = document.getElementById("editShiftComments");
+  if (!comments.length) {{
+    box.innerHTML = '<div class="text-sm-muted" style="padding:4px 0">Комментариев пока нет</div>';
+    return;
+  }}
+  box.innerHTML = comments.map(c => {{
+    const dt = new Date(c.created_at);
+    const ds = dt.toLocaleString("ru-RU", {{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}});
+    return '<div class="comment-card">' +
+      '<div class="comment-meta">' +
+      '<span class="comment-author">👤 ' + escHtml(c.author) + '</span>' +
+      '<span class="comment-date">' + ds + '</span>' +
+      '<button class="btn btn-sm btn-danger" onclick="deleteShiftComment(' + c.id + ')">× Удалить</button>' +
+      '</div>' +
+      '<div class="comment-body">' + escHtml(c.text) + '</div>' +
+      '</div>';
+  }}).join("");
+}}
+function escHtml(s) {{
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}}
+async function submitShiftComment() {{
+  const text = document.getElementById("editShiftCommentText").value.trim();
+  if (!text) {{ showToast("Введи текст", true); return; }}
+  try {{
+    const r = await fetch("/api/add_shift_comment", {{
+      method: "POST", headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{shift_id: editingShiftId, text}}),
+    }});
+    const d = await r.json();
+    if (d.ok) {{
+      showToast("Добавлено");
+      setTimeout(() => location.reload(), 400);
+    }} else showToast(d.error || "Ошибка", true);
+  }} catch(e) {{ showToast("Сеть: " + e.message, true); }}
+}}
+async function deleteShiftComment(id) {{
+  if (!confirm("Удалить комментарий?")) return;
+  try {{
+    const r = await fetch("/api/delete_shift_comment", {{
+      method: "POST", headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{id}}),
+    }});
+    const d = await r.json();
+    if (d.ok) {{ showToast("Удалено"); setTimeout(() => location.reload(), 400); }}
+    else showToast(d.error || "Ошибка", true);
+  }} catch(e) {{ showToast("Сеть: " + e.message, true); }}
 }}
 function closeEdit() {{ document.getElementById("modalEdit").classList.remove("show"); }}
 async function submitEdit() {{
@@ -520,6 +584,7 @@ def render_dashboard(period: str, search: str, user: str,
         shifts = [s for s in shifts if search_low in s["worker_name"].lower()]
 
     now = now_msk()
+    shift_comments_map = get_shift_comments_bulk([s["id"] for s in shifts])
     rows = []
     total_hours = 0.0
     open_running_hours = 0.0
@@ -552,10 +617,10 @@ def render_dashboard(period: str, search: str, user: str,
             delta = now - arr
             hrs = int(delta.total_seconds() // 3600)
             mins = int((delta.total_seconds() % 3600) // 60)
-            hours_str = f'<span style="color:var(--brand);">{hrs}ч {mins:02d}мин</span>'
+            hours_str = f'<span class="text-brand">{hrs}ч {mins:02d}мин</span>'
             if arr.date() == now.date():
                 left_str = (
-                    f'<button class="btn btn-sm" style="padding:2px 8px;font-size:11px;" '
+                    f'<button class="btn btn-sm" '
                     f'onclick="event.stopPropagation(); closeShiftNow({s["id"]}, '
                     f'{json.dumps(s["worker_name"])});">'
                     f'🕘 Закрыть сейчас</button>'
@@ -571,13 +636,15 @@ def render_dashboard(period: str, search: str, user: str,
         late_cls, late_lbl = lateness(s)
         if late_cls and not is_open:
             pills.append(f'<span class="pill {late_cls}">{late_lbl}</span>')
+        s_comments = shift_comments_map.get(s["id"], [])
+        if s_comments:
+            pills.append(f'<span class="pill" title="Комментариев: {len(s_comments)}">💬 {len(s_comments)}</span>')
         pill_html = " ".join(pills)
 
         worker_link = (
             f'<a href="/worker?id={s["worker_id"]}" onclick="event.stopPropagation();" '
             f'title="Открыть профиль" '
-            f'style="display:inline-block; margin-right:8px; opacity:0.55; '
-            f'text-decoration:none; font-size:13px;">👤</a>'
+            f'class="worker-link">👤</a>'
             f'<span>{html.escape(s["worker_name"])}</span>'
         )
 
@@ -587,7 +654,7 @@ def render_dashboard(period: str, search: str, user: str,
         left_hhmm = dt.datetime.fromisoformat(s['left_at']).strftime('%H:%M') if s['left_at'] else ''
         click_call = f"editShift({s['id']},'{arr_hhmm}','{left_hhmm}',{name_js},{date_js})"
         edit_btn = (
-            f'<button class="btn btn-sm" style="padding:3px 10px; font-size:12px;" '
+            f'<button class="btn btn-sm" '
             f'onclick="event.stopPropagation(); {click_call}">✏️</button>'
         )
         rows.append(
@@ -601,6 +668,29 @@ def render_dashboard(period: str, search: str, user: str,
             f'<td>{edit_btn}</td>'
             f'</tr>'
         )
+        if s_comments:
+            comment_cards = []
+            for c in s_comments:
+                created = dt.datetime.fromisoformat(c["created_at"])
+                comment_cards.append(
+                    f'<div class="comment-card" style="margin:4px 0;">'
+                    f'<div class="comment-meta">'
+                    f'<span class="comment-author">👤 {html.escape(c["author"])}</span>'
+                    f'<span class="comment-date">{created.strftime("%d.%m %H:%M")}</span>'
+                    f'<button class="btn btn-sm btn-danger" '
+                    f'onclick="event.stopPropagation(); deleteShiftComment({c["id"]})">'
+                    f'× Удалить</button>'
+                    f'</div>'
+                    f'<div class="comment-body">{html.escape(c["text"])}</div>'
+                    f'</div>'
+                )
+            rows.append(
+                f'<tr onclick="event.stopPropagation()" style="cursor:default;">'
+                f'<td colspan="7" style="padding:0 12px 8px; border-top:none; '
+                f'background:rgba(255,214,10,0.02);">'
+                + "".join(comment_cards) +
+                f'</td></tr>'
+            )
 
     filter_active = bool(search_low)
     totals_str = ""
@@ -612,7 +702,7 @@ def render_dashboard(period: str, search: str, user: str,
         if open_running_hours > 0:
             totals_parts.append(
                 f'<strong>+ открытых:</strong> '
-                f'<span style="color:var(--brand);">{open_running_hours:.1f}</span>'
+                f'<span class="text-brand">{open_running_hours:.1f}</span>'
             )
         if auto_count:
             totals_parts.append(f'<strong>Авто:</strong> {auto_count}')
@@ -690,7 +780,6 @@ def render_dashboard(period: str, search: str, user: str,
         export_qs += f"&from={custom_from}&to={custom_to}"
 
     return _DASHBOARD_HTML.format(
-        css=COMMON_CSS,
         topbar=topbar("dashboard", user),
         period_label=PERIOD_LABELS.get(period, period),
         period=period,
@@ -709,8 +798,7 @@ def render_dashboard(period: str, search: str, user: str,
         stat_open_now=len(open_now),
         open_shifts_block=open_html,
         table_rows="\n".join(rows) if rows else
-            '<tr><td colspan="7" style="text-align:center;color:var(--muted);">'
-            'Нет данных за период</td></tr>',
+            '<tr><td colspan="7" class="empty-cell">Нет данных за период</td></tr>',
         totals_row=totals_str,
         totals_display="block" if totals_str else "none",
         chart_by_worker_labels=json.dumps(bw_labels, ensure_ascii=False),

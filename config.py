@@ -21,7 +21,7 @@ def _load_dotenv():
 
 _load_dotenv()
 
-DB_PATH = os.environ.get("WORKTIME_DB", "/opt/worktime-bot/worktime.db")
+DB_PATH = os.environ.get("WORKTIME_DB", str(Path(__file__).parent / "worktime.db"))
 
 _users_raw = os.environ.get("WEB_USERS", "").strip()
 USERS: dict[str, str] = {}

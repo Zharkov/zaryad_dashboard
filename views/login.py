@@ -1,44 +1,11 @@
 import html
 
-from views.common import COMMON_CSS
-
 _LOGIN_PAGE = """<!doctype html>
 <html lang="ru"><head>
 <meta charset="utf-8">
 <title>ЗАРЯД · Вход</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-{css}
-.login-wrap {{ min-height: 100vh; display: flex; align-items: center;
-              justify-content: center; padding: 16px; }}
-.login-box {{ background: var(--surf); padding: 32px; border-radius: 12px;
-             border: 1px solid var(--border); width: 100%; max-width: 380px;
-             box-shadow: 0 8px 32px rgba(0,0,0,0.4); }}
-.login-logo {{ display: flex; flex-direction: column; align-items: center;
-              gap: 12px; margin-bottom: 28px; }}
-.login-logo .name {{ font-size: 28px; font-weight: 800; letter-spacing: 2px;
-                    color: var(--brand); }}
-.login-logo .sub {{ font-size: 11px; color: var(--muted);
-                    text-transform: uppercase; letter-spacing: 2px; }}
-.login-form label {{ display: block; font-size: 12px; color: var(--muted);
-                     text-transform: uppercase; letter-spacing: 1px;
-                     margin: 12px 0 6px; font-weight: 600; }}
-.login-form input {{ width: 100%; padding: 12px 14px; background: var(--bg);
-                     border: 1px solid var(--border); border-radius: 8px;
-                     color: var(--text); font-size: 15px; font-family: inherit; }}
-.login-form input:focus {{ outline: none; border-color: var(--brand); }}
-.login-form .remember {{ display: flex; align-items: center; gap: 8px;
-                          margin: 18px 0; font-size: 13px; color: var(--muted); }}
-.login-form .remember input {{ width: auto; accent-color: var(--brand); }}
-.login-form button {{ width: 100%; padding: 12px; background: var(--brand);
-                       color: #000; border: none; border-radius: 8px;
-                       font-size: 15px; font-weight: 700; cursor: pointer;
-                       margin-top: 8px; font-family: inherit; }}
-.login-form button:hover {{ background: #ffe44d; }}
-.login-error {{ background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3);
-               color: var(--bad); padding: 10px 14px; border-radius: 6px;
-               font-size: 13px; margin-bottom: 16px; }}
-</style>
+<link rel="stylesheet" href="/static/style.css">
 </head><body>
 <div class="login-wrap">
   <div class="login-box">
@@ -76,4 +43,4 @@ def render_login(error: str | None = None) -> str:
     err = ""
     if error:
         err = f'<div class="login-error">{html.escape(error)}</div>'
-    return _LOGIN_PAGE.format(css=COMMON_CSS, error_html=err)
+    return _LOGIN_PAGE.format(error_html=err)

@@ -2,7 +2,7 @@ import datetime as dt
 import html
 import json
 
-from views.common import COMMON_CSS, topbar
+from views.common import topbar
 from db.objects import get_object_by_id
 from db.workers import get_workers
 from db.attachments import get_workers_of_object
@@ -12,21 +12,21 @@ _OBJECT_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · {name}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>{css}</style>
+<link rel="stylesheet" href="/static/style.css">
 </head><body>
 {topbar}
 <div class="container">
-<a href="/objects" style="font-size:13px; color:var(--muted);">← Объекты</a>
+<a href="/objects" class="text-sm-muted">← Объекты</a>
 <h1>📍 {name_html}</h1>
 {description_html}
-<p style="color:var(--muted); margin-top:-8px;">{status_pill}</p>
+<p class="subtitle">{status_pill}</p>
 
 <div class="actions">
   <button class="btn btn-primary" onclick="openAttach()">👥 Прикрепить работников</button>
 </div>
 
 <h2>Прикреплённые работники ({worker_count})</h2>
-<div style="overflow-x:auto;">
+<div class="scroll-x">
 <table>
   <thead><tr><th>Имя</th><th>График</th><th>Прикреплён</th><th>Действия</th></tr></thead>
   <tbody>{worker_rows}</tbody>
@@ -39,17 +39,17 @@ _OBJECT_PAGE = """<!doctype html>
 <div class="modal-bg" id="modalAttach" onclick="if(event.target===this)closeAttach()">
   <div class="modal">
     <h3>👥 Прикрепить работников к "{name}"</h3>
-    <p style="color:var(--muted); font-size:13px;">
+    <p class="text-sm-muted">
       Уже прикреплённые показаны отмеченными. Снять галку — открепить, поставить — прикрепить.
       Нажми «Сохранить» чтобы применить.
     </p>
-    <div style="display:flex; gap:8px; margin: 8px 0;">
+    <div class="search-row">
       <input class="search" id="attSearch" type="text" placeholder="🔍 Поиск..."
-             oninput="attFilter()" style="margin:0;">
+             oninput="attFilter()">
       <button class="btn btn-sm" type="button" onclick="attToggleAll()">Все</button>
     </div>
     <div class="workers-grid" id="attGrid"></div>
-    <div style="font-size:12px; color:var(--muted);" id="attCount">Выбрано: 0</div>
+    <div class="hint" id="attCount">Выбрано: 0</div>
     <div class="footer-btns">
       <button class="btn" onclick="closeAttach()">Отмена</button>
       <button class="btn btn-primary" onclick="submitAttach()">Сохранить</button>
@@ -175,16 +175,15 @@ def render_object_detail(object_id: int, user: str) -> str | None:
     desc_html = ""
     if obj["description"]:
         desc_html = (
-            f'<p style="color:var(--muted); margin:8px 0; '
-            f'background:var(--surf); padding:10px 14px; border-radius:8px; '
-            f'border:1px solid var(--border);">{html.escape(obj["description"])}</p>'
+            f'<p class="info-block">'
+            f'{html.escape(obj["description"])}</p>'
         )
 
     status_pill = ('<span class="pill very-late">закрыт</span>' if is_deleted else '')
 
     name_html_v = html.escape(obj["name"])
     if is_deleted:
-        name_html_v = f'<span style="text-decoration:line-through; color:var(--muted);">{name_html_v}</span>'
+        name_html_v = f'<span class="strike">{name_html_v}</span>'
 
     worker_rows = []
     for w in attached:
@@ -194,14 +193,13 @@ def render_object_detail(object_id: int, user: str) -> str | None:
         worker_rows.append(
             f'<tr><td><a href="/worker?id={w["id"]}">{html.escape(w["name"])}</a></td>'
             f'<td>{w["default_start"]}-{w["default_end"]}</td>'
-            f'<td style="color:var(--muted);font-size:13px;">{att_str}</td>'
+            f'<td class="text-sm-muted">{att_str}</td>'
             f'<td><button class="btn btn-sm btn-danger" '
             f'onclick="detachOne({w["id"]}, {name_for_js})">Открепить</button></td>'
             f'</tr>'
         )
 
     return _OBJECT_PAGE.format(
-        css=COMMON_CSS,
         topbar=topbar("objects", user),
         name=html.escape(obj["name"]),
         name_html=name_html_v,
@@ -209,7 +207,7 @@ def render_object_detail(object_id: int, user: str) -> str | None:
         status_pill=status_pill,
         worker_count=len(attached),
         worker_rows="\n".join(worker_rows) if worker_rows else
-            '<tr><td colspan="4" style="text-align:center;color:var(--muted);">'
+            '<tr><td colspan="4" class="empty-cell">'
             'Никто не прикреплён. Нажми «👥 Прикрепить работников»</td></tr>',
         object_id=object_id,
         workers_json=json.dumps(workers_data, ensure_ascii=False),
