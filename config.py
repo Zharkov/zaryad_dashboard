@@ -39,9 +39,8 @@ else:
         USERS[_legacy_user] = _legacy_pass
 
 if not USERS:
-    print("ERROR: no users configured. Set WEB_USERS=admin:pass1,boss:pass2 in .env",
+    print("Предупреждение: WEB_USERS не задан в .env (используются администраторы из БД)",
           file=sys.stderr)
-    sys.exit(1)
 
 PORT = int(os.environ.get("WEB_PORT", "9090"))
 HOST = os.environ.get("WEB_HOST", "0.0.0.0")

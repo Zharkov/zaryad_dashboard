@@ -1,7 +1,7 @@
 import datetime as dt
 import urllib.parse
 
-from config import USERS
+from db.admin_users import authenticate_admin
 from sessions import create_session, get_session
 from db.workers import (
     add_worker, update_worker,
@@ -91,7 +91,7 @@ class PostRoutesMixin:
         password = (body.get("password", [""])[0] or "").strip()
 
         if username and password:
-            if username in USERS and USERS[username] == password:
+            if authenticate_admin(username, password):
                 token = create_session(username, role="admin")
                 self.send_response(303)
                 self._set_session_cookie(token)

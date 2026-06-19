@@ -305,3 +305,32 @@ canvas { max-height: 300px; }
 .code-copy { font-size: 12px; background: var(--bg); padding: 1px 6px; border-radius: 3px;
              user-select: all; cursor: pointer; }
 .cred-btns { display: flex; gap: 4px; margin-top: 4px; }
+
+/* Easter egg — flying pig */
+#flyingPig {
+  position: fixed; top: 42%; left: -180px;
+  font-size: 120px; pointer-events: none; z-index: 9999;
+  display: none; transform: scaleX(-1);
+  filter: drop-shadow(0 4px 12px rgba(255,105,180,0.6));
+}
+@keyframes pigFly {
+  0%   { left: -120px; top: 42%; transform: scaleX(-1) rotate(0deg); }
+  20%  { top: 35%;  transform: scaleX(-1) rotate(-8deg); }
+  40%  { top: 48%;  transform: scaleX(-1) rotate(6deg); }
+  60%  { top: 33%;  transform: scaleX(-1) rotate(-6deg); }
+  80%  { top: 46%;  transform: scaleX(-1) rotate(4deg); }
+  100% { left: calc(100vw + 120px); top: 42%; transform: scaleX(-1) rotate(0deg); }
+}
+#flyingPig.flying { display: block; animation: pigFly 4s ease-in-out forwards; }
+
+/* Worker rank list */
+.worker-rank-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }
+.worker-rank-row { display: flex; align-items: center; gap: 10px; }
+.rank-num { font-size: 12px; color: var(--muted); width: 22px; text-align: right; flex-shrink: 0; }
+.rank-name { font-size: 13px; width: 160px; flex-shrink: 0; white-space: nowrap;
+             overflow: hidden; text-overflow: ellipsis; }
+.rank-bar-wrap { flex: 1; background: var(--surf2); border-radius: 4px; height: 18px;
+                 overflow: hidden; min-width: 60px; }
+.rank-bar { height: 100%; background: var(--brand); border-radius: 4px; }
+.rank-hours { font-size: 13px; font-weight: 600; color: var(--brand);
+              width: 56px; text-align: right; flex-shrink: 0; }

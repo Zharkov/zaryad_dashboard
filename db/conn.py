@@ -78,4 +78,10 @@ def db_migrate():
             deleted_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_shift_comments_shift ON shift_comments(shift_id);
+        CREATE TABLE IF NOT EXISTS admin_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_plain TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
         """)

@@ -22,7 +22,7 @@ _DASHBOARD_HTML = """<!doctype html>
 
 <div class="container">
 
-<h1>📊 {period_label}</h1>
+<h1><span id="chartIcon" onclick="chartIconClick()" style="cursor:default;user-select:none;">📊</span> {period_label}</h1>
 
 <div class="actions">
   <button class="btn btn-primary" onclick="openMassMark('arr')">➕ Приход</button>
@@ -61,7 +61,9 @@ _DASHBOARD_HTML = """<!doctype html>
 {open_shifts_block}
 
 <h2>Часы по работникам</h2>
-<div class="chart-box"><canvas id="byWorker"></canvas></div>
+<div class="worker-rank-list">
+{worker_rank_rows}
+</div>
 
 <h2>Тренд по дням</h2>
 <div class="chart-box"><canvas id="byDay"></canvas></div>
@@ -191,6 +193,7 @@ _DASHBOARD_HTML = """<!doctype html>
 </div>
 
 <div class="toast" id="toast"></div>
+<div id="flyingPig">🐷</div>
 
 <script>
 const WORKERS = {workers_json};
@@ -213,14 +216,6 @@ const chartOpts = {{
     y: {{ ticks: {{ color: "#8b949e" }}, grid: {{ color: "#30363d" }}, beginAtZero: true }}
   }}
 }};
-new Chart(document.getElementById("byWorker"), {{
-  type: "bar",
-  data: {{ labels: {chart_by_worker_labels}, datasets: [{{
-    label: "Часов", data: {chart_by_worker_data},
-    backgroundColor: "#ffd60a", borderRadius: 4
-  }}] }},
-  options: {{ ...chartOpts, indexAxis: "y" }}
-}});
 new Chart(document.getElementById("byDay"), {{
   type: "line",
   data: {{ labels: {chart_by_day_labels}, datasets: [{{
@@ -568,6 +563,21 @@ setInterval(() => {{
   if (document.querySelector(".modal-bg.show")) return;
   location.reload();
 }}, 30000);
+
+let _pigClicks = 0, _pigTimer = null;
+function chartIconClick() {{
+  _pigClicks++;
+  clearTimeout(_pigTimer);
+  _pigTimer = setTimeout(() => {{ _pigClicks = 0; }}, 1200);
+  if (_pigClicks >= 3) {{
+    _pigClicks = 0;
+    const pig = document.getElementById("flyingPig");
+    pig.classList.remove("flying");
+    void pig.offsetWidth;
+    pig.classList.add("flying");
+    pig.addEventListener("animationend", () => pig.classList.remove("flying"), {{once: true}});
+  }}
+}}
 </script>
 </body></html>
 """
@@ -736,8 +746,22 @@ def render_dashboard(period: str, search: str, user: str,
             continue
         by_worker[s["worker_name"]] = by_worker.get(s["worker_name"], 0) + h
     by_worker_sorted = sorted(by_worker.items(), key=lambda kv: -kv[1])
-    bw_labels = [n for n, _ in by_worker_sorted]
-    bw_data = [round(h, 2) for _, h in by_worker_sorted]
+    max_h = by_worker_sorted[0][1] if by_worker_sorted else 1
+    rank_rows = []
+    for i, (name, h) in enumerate(by_worker_sorted, 1):
+        pct = h / max_h * 100
+        rank_rows.append(
+            f'<div class="worker-rank-row">'
+            f'<span class="rank-num">{i}</span>'
+            f'<span class="rank-name" title="{html.escape(name)}">{html.escape(name)}</span>'
+            f'<div class="rank-bar-wrap">'
+            f'<div class="rank-bar" style="width:{pct:.1f}%"></div>'
+            f'</div>'
+            f'<span class="rank-hours">{h:.1f} ч</span>'
+            f'</div>'
+        )
+    worker_rank_rows = "\n".join(rank_rows) if rank_rows else \
+        '<div class="text-sm-muted" style="padding:8px 0">Нет данных</div>'
 
     by_day: dict[str, float] = {}
     d = date_from
@@ -801,8 +825,7 @@ def render_dashboard(period: str, search: str, user: str,
             '<tr><td colspan="7" class="empty-cell">Нет данных за период</td></tr>',
         totals_row=totals_str,
         totals_display="block" if totals_str else "none",
-        chart_by_worker_labels=json.dumps(bw_labels, ensure_ascii=False),
-        chart_by_worker_data=json.dumps(bw_data),
+        worker_rank_rows=worker_rank_rows,
         chart_by_day_labels=json.dumps(bd_labels, ensure_ascii=False),
         chart_by_day_data=json.dumps(bd_data),
         workers_json=json.dumps(workers_data, ensure_ascii=False),
