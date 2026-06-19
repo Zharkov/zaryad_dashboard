@@ -341,8 +341,20 @@ canvas { max-height: 300px; }
   25%       { transform: scaleX(-1) rotate(-8deg); }
   75%       { transform: scaleX(-1) rotate(8deg); }
 }
-#flyingPig.flying { display: block; animation: pigFly 4s ease-in-out forwards; }
+#flyingPig.flying { display: block; animation: pigFly 8s linear forwards; }
 #flyingPig.flying .pig-emoji { animation: pigWobble 0.5s ease-in-out infinite; }
+
+/* Filter bar */
+.filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.filter-chip { padding: 5px 14px; background: var(--surf2); color: var(--muted);
+               border: 1px solid var(--border); border-radius: 20px; font-size: 12px;
+               cursor: pointer; font-family: inherit; transition: all 0.15s; white-space: nowrap; }
+.filter-chip:hover { color: var(--text); border-color: var(--muted); }
+.filter-chip.active { background: var(--brand); color: #000; border-color: var(--brand); font-weight: 600; }
+.filter-select { background: var(--surf2); color: var(--text); border: 1px solid var(--border);
+                 border-radius: 6px; padding: 5px 10px; font-size: 13px; font-family: inherit; cursor: pointer; }
+.filter-select:focus { outline: none; border-color: var(--brand); }
 
 /* Worker rank list */
 .worker-rank-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }

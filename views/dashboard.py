@@ -7,6 +7,8 @@ from views.common import topbar
 from db.workers import get_workers
 from db.shifts import get_shifts, get_open_shifts
 from db.comments import get_shift_comments_bulk
+from db.attachments import get_worker_object_map
+from db.objects import get_objects
 from utils import parse_period, now_msk, PERIOD_LABELS, lateness, shift_hours
 
 _DASHBOARD_HTML = """<!doctype html>
@@ -15,7 +17,7 @@ _DASHBOARD_HTML = """<!doctype html>
 <title>ЗАРЯД · Дашборд</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<link rel="stylesheet" href="/static/style.css?v=3">
+<link rel="stylesheet" href="/static/style.css?v=5">
 </head><body>
 
 {topbar}
@@ -74,6 +76,19 @@ _DASHBOARD_HTML = """<!doctype html>
   <input class="search" type="text" name="search" placeholder="🔍 Поиск по имени работника..."
          value="{search_value}" oninput="this.form.submit()">
 </form>
+<div class="filter-bar">
+  <div class="filter-chips">
+    <button class="filter-chip" data-filter="auto" onclick="toggleFilter(this)">⚙ Авто</button>
+    <button class="filter-chip" data-filter="open" onclick="toggleFilter(this)">🟢 Открытые</button>
+    <button class="filter-chip" data-filter="late" onclick="toggleFilter(this)">⏰ Опоздание</button>
+    <button class="filter-chip" data-filter="commented" onclick="toggleFilter(this)">💬 С комментарием</button>
+  </div>
+  <select id="fObject" class="filter-select" onchange="applyFilters()">
+    <option value="">Все объекты</option>
+    {object_options}
+  </select>
+  <button class="btn btn-sm" id="resetBtn" onclick="resetFilters()" style="display:none">✕ Сброс</button>
+</div>
 <div class="scroll-x">
 <table>
   <thead><tr><th>Дата</th><th>Работник</th><th>Приход</th><th>Уход</th><th>Часы</th><th>Пометка</th><th></th></tr></thead>
@@ -568,6 +583,41 @@ setInterval(() => {{
   location.reload();
 }}, 30000);
 
+const activeFilters = new Set();
+function toggleFilter(btn) {{
+  const f = btn.dataset.filter;
+  if (activeFilters.has(f)) {{ activeFilters.delete(f); btn.classList.remove("active"); }}
+  else {{ activeFilters.add(f); btn.classList.add("active"); }}
+  applyFilters();
+}}
+function applyFilters() {{
+  const fObj = document.getElementById("fObject").value;
+  const hasAny = activeFilters.size > 0 || fObj;
+  document.getElementById("resetBtn").style.display = hasAny ? "" : "none";
+  document.querySelectorAll("tbody tr.shift-row").forEach(row => {{
+    let show = true;
+    if (activeFilters.size > 0) {{
+      let match = false;
+      for (const f of activeFilters) {{ if (row.dataset[f] === "1") {{ match = true; break; }} }}
+      if (!match) show = false;
+    }}
+    if (show && fObj) {{
+      const objs = (row.dataset.objects || "").split(",").filter(Boolean);
+      if (!objs.includes(fObj)) show = false;
+    }}
+    row.style.display = show ? "" : "none";
+    const next = row.nextElementSibling;
+    if (next && next.classList.contains("comment-sub-row"))
+      next.style.display = show ? "" : "none";
+  }});
+}}
+function resetFilters() {{
+  activeFilters.clear();
+  document.querySelectorAll(".filter-chip.active").forEach(b => b.classList.remove("active"));
+  document.getElementById("fObject").value = "";
+  applyFilters();
+}}
+
 let _pigClicks = 0, _pigTimer = null;
 function chartIconClick() {{
   _pigClicks++;
@@ -599,6 +649,14 @@ def render_dashboard(period: str, search: str, user: str,
 
     now = now_msk()
     shift_comments_map = get_shift_comments_bulk([s["id"] for s in shifts])
+    worker_ids_in_period = list({s["worker_id"] for s in shifts})
+    worker_obj_map = get_worker_object_map(worker_ids_in_period)
+    all_objects = get_objects(include_deleted=False)
+    relevant_obj_ids = {oid for oids in worker_obj_map.values() for oid in oids}
+    object_options = "\n".join(
+        f'<option value="{o["id"]}">{html.escape(o["name"])}</option>'
+        for o in all_objects if o["id"] in relevant_obj_ids
+    )
     rows = []
     total_hours = 0.0
     open_running_hours = 0.0
@@ -671,8 +729,14 @@ def render_dashboard(period: str, search: str, user: str,
             f'<button class="btn btn-sm" '
             f'onclick="event.stopPropagation(); {click_call}">✏️</button>'
         )
+        obj_ids_str = ",".join(str(oid) for oid in worker_obj_map.get(s["worker_id"], []))
         rows.append(
-            f'<tr class="hover-row {cls}" onclick="{click_call}">'
+            f'<tr class="hover-row shift-row {cls}" onclick="{click_call}"'
+            f' data-auto="{1 if is_auto else 0}"'
+            f' data-open="{1 if is_open else 0}"'
+            f' data-late="{1 if late_cls in ("late", "very-late") else 0}"'
+            f' data-commented="{1 if s_comments else 0}"'
+            f' data-objects="{obj_ids_str}">'
             f'<td>{arr.strftime("%d.%m")}</td>'
             f'<td>{worker_link}</td>'
             f'<td>{arr.strftime("%H:%M")}</td>'
@@ -699,7 +763,7 @@ def render_dashboard(period: str, search: str, user: str,
                     f'</div>'
                 )
             rows.append(
-                f'<tr onclick="event.stopPropagation()" style="cursor:default;">'
+                f'<tr class="comment-sub-row" onclick="event.stopPropagation()" style="cursor:default;">'
                 f'<td colspan="7" style="padding:0 12px 8px; border-top:none; '
                 f'background:rgba(255,214,10,0.02);">'
                 + "".join(comment_cards) +
@@ -830,6 +894,7 @@ def render_dashboard(period: str, search: str, user: str,
         totals_row=totals_str,
         totals_display="block" if totals_str else "none",
         worker_rank_rows=worker_rank_rows,
+        object_options=object_options,
         chart_by_day_labels=json.dumps(bd_labels, ensure_ascii=False),
         chart_by_day_data=json.dumps(bd_data),
         workers_json=json.dumps(workers_data, ensure_ascii=False),

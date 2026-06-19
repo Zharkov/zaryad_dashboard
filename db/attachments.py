@@ -58,6 +58,24 @@ def get_workers_of_object(object_id: int, include_deleted: bool = False):
         return list(c.execute(sql, (object_id,)))
 
 
+def get_worker_object_map(worker_ids: list) -> dict:
+    if not worker_ids:
+        return {}
+    with db_conn() as c:
+        placeholders = ",".join("?" * len(worker_ids))
+        rows = c.execute(
+            f"SELECT worker_id, object_id FROM worker_objects WHERE worker_id IN ({placeholders})",
+            worker_ids,
+        ).fetchall()
+    result: dict = {}
+    for row in rows:
+        wid = row["worker_id"]
+        if wid not in result:
+            result[wid] = []
+        result[wid].append(row["object_id"])
+    return result
+
+
 def count_workers_per_object():
     with db_conn() as c:
         rows = c.execute(
