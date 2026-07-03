@@ -17,7 +17,7 @@ _DASHBOARD_HTML = """<!doctype html>
 <title>ЗАРЯД · Дашборд</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<link rel="stylesheet" href="/static/style.css?v=7">
+<link rel="stylesheet" href="/static/style.css?v=11">
 </head><body>
 
 {topbar}
@@ -82,11 +82,16 @@ _DASHBOARD_HTML = """<!doctype html>
     <option value="">Все объекты</option>
     {object_options}
   </select>
+  <select id="fShiftType" class="filter-select" onchange="applyFilters()">
+    <option value="">Все смены</option>
+    <option value="day">☀️ Дневная</option>
+    <option value="night">🌙 Ночная</option>
+  </select>
   <button class="btn btn-sm" id="resetBtn" onclick="resetFilters()" style="display:none">✕ Сброс</button>
 </div>
 <div class="scroll-x">
 <table>
-  <thead><tr><th>Дата</th><th>Работник</th><th>Приход</th><th>Уход</th><th>Часы</th><th>Пометка</th><th></th></tr></thead>
+  <thead><tr><th>Дата</th><th>Смена</th><th>Работник</th><th>Приход</th><th>Уход</th><th>Часы</th><th>Пометка</th><th></th></tr></thead>
   <tbody>
 {table_rows}
   </tbody>
@@ -106,12 +111,17 @@ _DASHBOARD_HTML = """<!doctype html>
     <h3 id="massTitle">Массовая отметка</h3>
     <div class="row">
       <label>Время:</label>
-      <input type="time" id="massTime">
+      <input type="time" id="massTime" onchange="massGuessShiftType()">
       <div class="time-presets">
-        <button type="button" onclick="setTime('09:00')">9:00</button>
-        <button type="button" onclick="setTime('17:00')">17:00</button>
+        <button type="button" id="massPreset1" data-t="09:00" onclick="setTime(this.dataset.t)">9:00</button>
+        <button type="button" id="massPreset2" data-t="17:00" onclick="setTime(this.dataset.t)">17:00</button>
         <button type="button" onclick="setTimeNow()">Сейчас</button>
       </div>
+    </div>
+    <div class="row shift-type-row" id="massShiftType">
+      <label>Смена:</label>
+      <label class="shift-type-opt"><input type="radio" name="massShiftType" value="day" checked onchange="updateMassPresets()"> ☀️ Дневная</label>
+      <label class="shift-type-opt"><input type="radio" name="massShiftType" value="night" onchange="updateMassPresets()"> 🌙 Ночная</label>
     </div>
     <div class="search-row">
       <input class="search" id="massSearch" type="text" placeholder="🔍 Поиск..."
@@ -140,6 +150,11 @@ _DASHBOARD_HTML = """<!doctype html>
     </div>
     <div class="hint">
       Оставь поле пустым чтобы не менять
+    </div>
+    <div class="row shift-type-row">
+      <label>Смена:</label>
+      <label class="shift-type-opt"><input type="radio" name="editShiftType" value="day"> ☀️ Дневная</label>
+      <label class="shift-type-opt"><input type="radio" name="editShiftType" value="night"> 🌙 Ночная</label>
     </div>
     <div id="editReopenBox" class="reopen-box">
       <div class="modal-note">
@@ -181,6 +196,11 @@ _DASHBOARD_HTML = """<!doctype html>
         <label class="field-label">Уход (можно пусто):</label>
         <input type="time" id="bdLeft">
       </div>
+    </div>
+    <div class="row shift-type-row">
+      <label>Смена:</label>
+      <label class="shift-type-opt"><input type="radio" name="bdShiftType" value="day" checked> ☀️ Дневная</label>
+      <label class="shift-type-opt"><input type="radio" name="bdShiftType" value="night"> 🌙 Ночная</label>
     </div>
     <div class="time-presets mt-sm">
       <button type="button" onclick="bdSetUsual()">⚡ Как обычно (по графику)</button>
@@ -250,9 +270,17 @@ const chartOpts = {{
 new Chart(document.getElementById("byDay"), {{
   type: "line",
   data: {{ labels: {chart_by_day_labels}, datasets: [{{
-    label: "Часов в день", data: {chart_by_day_data},
+    label: "Всего", data: {chart_by_total_data},
+    borderColor: "#f0f6fc", backgroundColor: "rgba(240, 246, 252, 0.1)",
+    fill: true, tension: 0.3, pointRadius: 3, pointBackgroundColor: "#f0f6fc"
+  }}, {{
+    label: "☀️ Дневная", data: {chart_by_day_data}, hidden: true,
     borderColor: "#ffd60a", backgroundColor: "rgba(255, 214, 10, 0.15)",
     fill: true, tension: 0.3, pointRadius: 3, pointBackgroundColor: "#ffd60a"
+  }}, {{
+    label: "🌙 Ночная", data: {chart_by_night_data}, hidden: true,
+    borderColor: "#58a6ff", backgroundColor: "rgba(88, 166, 255, 0.15)",
+    fill: true, tension: 0.3, pointRadius: 3, pointBackgroundColor: "#58a6ff"
   }}] }},
   options: chartOpts
 }});
@@ -331,6 +359,7 @@ async function submitBackdate() {{
   const date = document.getElementById("bdDate").value;
   const arr = document.getElementById("bdArr").value;
   const left = document.getElementById("bdLeft").value;
+  const shiftType = document.querySelector('input[name="bdShiftType"]:checked').value;
   const ids = Array.from(document.querySelectorAll("#bdWorkersGrid input:checked"))
     .map(c => parseInt(c.value));
   if (!date) {{ showToast("Укажи дату", true); return; }}
@@ -340,7 +369,7 @@ async function submitBackdate() {{
     const r = await fetch("/api/backdate_shift", {{
       method: "POST",
       headers: {{"Content-Type": "application/json"}},
-      body: JSON.stringify({{date, arrived: arr, left, worker_ids: ids}}),
+      body: JSON.stringify({{date, arrived: arr, left, worker_ids: ids, shift_type: shiftType}}),
     }});
     const data = await r.json();
     if (data.ok) {{
@@ -386,12 +415,23 @@ function openMassMark(action) {{
     action === "arr" ? "➕ Массовая отметка прихода" : "➖ Массовая отметка ухода";
   document.getElementById("massTime").value = "";
   document.getElementById("massSearch").value = "";
+  document.querySelector('input[name="massShiftType"][value="day"]').checked = true;
+  updateMassPresets();
   renderWorkers([]);
   updateCount();
   document.getElementById("modalMass").classList.add("show");
 }}
 function closeMass() {{ document.getElementById("modalMass").classList.remove("show"); }}
 function setTime(t) {{ document.getElementById("massTime").value = t; }}
+function updateMassPresets() {{
+  const isNight = document.querySelector('input[name="massShiftType"]:checked').value === "night";
+  const p1 = document.getElementById("massPreset1");
+  const p2 = document.getElementById("massPreset2");
+  p1.dataset.t = isNight ? "22:00" : "09:00";
+  p1.textContent = isNight ? "22:00" : "9:00";
+  p2.dataset.t = isNight ? "06:00" : "17:00";
+  p2.textContent = isNight ? "6:00" : "17:00";
+}}
 function setTimeNow() {{
   const d = new Date();
   setTime(String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"));
@@ -439,9 +479,18 @@ function updateCount() {{
   const n = document.querySelectorAll("#workersGrid input:checked").length;
   document.getElementById("selCount").textContent = "Выбрано: " + n;
 }}
+function massGuessShiftType() {{
+  const time = document.getElementById("massTime").value;
+  if (!time) return;
+  const h = parseInt(time.split(":")[0], 10);
+  const isNight = h >= 18 || h < 6;
+  document.querySelector(`input[name="massShiftType"][value="${{isNight ? "night" : "day"}}"]`).checked = true;
+  updateMassPresets();
+}}
 async function submitMass() {{
   const time = document.getElementById("massTime").value;
   if (!time) {{ showToast("Укажи время", true); return; }}
+  const shiftType = document.querySelector('input[name="massShiftType"]:checked').value;
   const ids = Array.from(document.querySelectorAll("#workersGrid input:checked"))
     .map(c => parseInt(c.value));
   if (!ids.length) {{ showToast("Выбери работников", true); return; }}
@@ -449,7 +498,7 @@ async function submitMass() {{
     const r = await fetch("/api/mass_mark", {{
       method: "POST",
       headers: {{"Content-Type": "application/json"}},
-      body: JSON.stringify({{action: massAction, time, worker_ids: ids}}),
+      body: JSON.stringify({{action: massAction, time, worker_ids: ids, shift_type: shiftType}}),
     }});
     const data = await r.json();
     if (data.ok) {{
@@ -464,13 +513,14 @@ async function submitMass() {{
   }}
 }}
 
-function editShift(id, arr, left, name, date) {{
+function editShift(id, arr, left, name, date, shiftType) {{
   editingShiftId = id;
   document.getElementById("editTitle").textContent = `${{name}} · ${{date}}`;
   document.getElementById("editArr").value = arr === "—" ? "" : arr;
   document.getElementById("editLeft").value = left === "—" ? "" : left;
   const isClosed = left && left !== "—";
   document.getElementById("editReopenBox").style.display = isClosed ? "block" : "none";
+  document.querySelector(`input[name="editShiftType"][value="${{shiftType || "day"}}"]`).checked = true;
   document.getElementById("editShiftCommentText").value = "";
   document.getElementById("modalEdit").classList.add("show");
   loadShiftComments(id);
@@ -541,11 +591,12 @@ function closeEdit() {{ document.getElementById("modalEdit").classList.remove("s
 async function submitEdit() {{
   const arr = document.getElementById("editArr").value;
   const left = document.getElementById("editLeft").value;
+  const shiftType = document.querySelector('input[name="editShiftType"]:checked').value;
   try {{
     const r = await fetch("/api/edit_shift", {{
       method: "POST",
       headers: {{"Content-Type": "application/json"}},
-      body: JSON.stringify({{id: editingShiftId, arrived: arr, left}}),
+      body: JSON.stringify({{id: editingShiftId, arrived: arr, left, shift_type: shiftType}}),
     }});
     const data = await r.json();
     if (data.ok) {{
@@ -604,7 +655,8 @@ function toggleFilter(btn) {{
 }}
 function applyFilters() {{
   const fObj = document.getElementById("fObject").value;
-  const hasAny = activeFilters.size > 0 || fObj;
+  const fShiftType = document.getElementById("fShiftType").value;
+  const hasAny = activeFilters.size > 0 || fObj || fShiftType;
   document.getElementById("resetBtn").style.display = hasAny ? "" : "none";
   document.querySelectorAll("tbody tr.shift-row").forEach(row => {{
     let show = true;
@@ -617,6 +669,7 @@ function applyFilters() {{
       const objs = (row.dataset.objects || "").split(",").filter(Boolean);
       if (!objs.includes(fObj)) show = false;
     }}
+    if (show && fShiftType && row.dataset.shiftType !== fShiftType) show = false;
     row.style.display = show ? "" : "none";
     const next = row.nextElementSibling;
     if (next && next.classList.contains("comment-sub-row"))
@@ -627,6 +680,7 @@ function resetFilters() {{
   activeFilters.clear();
   document.querySelectorAll(".filter-chip.active").forEach(b => b.classList.remove("active"));
   document.getElementById("fObject").value = "";
+  document.getElementById("fShiftType").value = "";
   applyFilters();
 }}
 
@@ -732,11 +786,15 @@ def render_dashboard(period: str, search: str, user: str,
             f'👤 {html.escape(s["worker_name"])}</a>'
         )
 
+        shift_type = s["shift_type"] or "day"
         name_js = html.escape(json.dumps(s["worker_name"], ensure_ascii=False), quote=True)
         date_js = html.escape(json.dumps(arr.strftime("%d.%m.%Y")), quote=True)
         arr_hhmm = arr.strftime('%H:%M')
         left_hhmm = dt.datetime.fromisoformat(s['left_at']).strftime('%H:%M') if s['left_at'] else ''
-        click_call = f"editShift({s['id']},'{arr_hhmm}','{left_hhmm}',{name_js},{date_js})"
+        click_call = (
+            f"editShift({s['id']},'{arr_hhmm}','{left_hhmm}',{name_js},{date_js},"
+            f"'{shift_type}')"
+        )
         if is_accountant:
             edit_btn = ''
             row_onclick = ''
@@ -749,14 +807,17 @@ def render_dashboard(period: str, search: str, user: str,
             row_onclick = f' onclick="{click_call}"'
             row_cls = f'hover-row shift-row {cls}'
         obj_ids_str = ",".join(str(oid) for oid in worker_obj_map.get(s["worker_id"], []))
+        shift_type_html = '🌙 Ночь' if shift_type == "night" else '☀️ День'
         rows.append(
             f'<tr class="{row_cls}"{row_onclick}'
             f' data-auto="{1 if is_auto else 0}"'
             f' data-open="{1 if is_open else 0}"'
             f' data-late="{1 if late_cls in ("late", "very-late") else 0}"'
             f' data-commented="{1 if s_comments else 0}"'
+            f' data-shift-type="{shift_type}"'
             f' data-objects="{obj_ids_str}">'
             f'<td>{arr.strftime("%d.%m")}</td>'
+            f'<td>{shift_type_html}</td>'
             f'<td>{worker_link}</td>'
             f'<td>{arr.strftime("%H:%M")}</td>'
             f'<td>{left_str}</td>'
@@ -786,7 +847,7 @@ def render_dashboard(period: str, search: str, user: str,
                 )
             rows.append(
                 f'<tr class="comment-sub-row" onclick="event.stopPropagation()" style="cursor:default;">'
-                f'<td colspan="7" style="padding:0 12px 8px; border-top:none; '
+                f'<td colspan="8" style="padding:0 12px 8px; border-top:none; '
                 f'background:rgba(255,214,10,0.02);">'
                 + "".join(comment_cards) +
                 f'</td></tr>'
@@ -853,18 +914,23 @@ def render_dashboard(period: str, search: str, user: str,
     worker_rank_rows = "\n".join(rank_rows) if rank_rows else \
         '<div class="text-sm-muted" style="padding:8px 0">Нет данных</div>'
 
-    by_day: dict[str, float] = {}
+    by_day_day: dict[str, float] = {}
+    by_day_night: dict[str, float] = {}
     d = date_from
     while d <= date_to:
-        by_day[d.isoformat()] = 0.0
+        by_day_day[d.isoformat()] = 0.0
+        by_day_night[d.isoformat()] = 0.0
         d += dt.timedelta(days=1)
     for s in shifts:
         h = shift_hours(s)
         if h is None:
             continue
-        by_day[s["date"]] = by_day.get(s["date"], 0) + h
-    bd_labels = [dt.date.fromisoformat(d).strftime("%d.%m") for d in by_day]
-    bd_data = [round(h, 2) for h in by_day.values()]
+        bucket = by_day_night if s["shift_type"] == "night" else by_day_day
+        bucket[s["date"]] = bucket.get(s["date"], 0) + h
+    bd_labels = [dt.date.fromisoformat(d).strftime("%d.%m") for d in by_day_day]
+    bd_data_day = [round(h, 2) for h in by_day_day.values()]
+    bd_data_night = [round(h, 2) for h in by_day_night.values()]
+    bd_data_total = [round(dh + nh, 2) for dh, nh in zip(bd_data_day, bd_data_night)]
 
     workers_data = [
         {"id": w["id"], "name": w["name"],
@@ -937,13 +1003,15 @@ def render_dashboard(period: str, search: str, user: str,
         detail_title=detail_title,
         is_accountant_js=is_accountant_js,
         table_rows="\n".join(rows) if rows else
-            '<tr><td colspan="7" class="empty-cell">Нет данных за период</td></tr>',
+            '<tr><td colspan="8" class="empty-cell">Нет данных за период</td></tr>',
         totals_row=totals_str,
         totals_display="block" if totals_str else "none",
         worker_rank_rows=worker_rank_rows,
         object_options=object_options,
         chart_by_day_labels=json.dumps(bd_labels, ensure_ascii=False),
-        chart_by_day_data=json.dumps(bd_data),
+        chart_by_day_data=json.dumps(bd_data_day),
+        chart_by_night_data=json.dumps(bd_data_night),
+        chart_by_total_data=json.dumps(bd_data_total),
         workers_json=json.dumps(workers_data, ensure_ascii=False),
         now=now.strftime("%d.%m.%Y %H:%M"),
     )

@@ -36,6 +36,8 @@ def shift_hours(row) -> float | None:
 def lateness(shift) -> tuple[str, str]:
     if not shift["default_start"]:
         return "", ""
+    if shift["shift_type"] == "night":
+        return "", ""
     arr = dt.datetime.fromisoformat(shift["arrived_at"]).time()
     sched = hhmm_to_time(shift["default_start"])
     arr_min = arr.hour * 60 + arr.minute

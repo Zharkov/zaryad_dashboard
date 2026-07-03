@@ -2,7 +2,7 @@ import datetime as dt
 import html
 import json
 
-from views.common import render_heatmap
+from views.common import render_heatmap, build_heatmap_info_json
 from db.workers import get_worker_by_id
 from db.shifts import get_all_shifts_for_worker
 from db.attachments import get_objects_of_worker
@@ -14,7 +14,7 @@ _MY_PAGE = """<!doctype html>
 <title>ЗАРЯД · {name}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=11">
 </head><body>
 
 <div class="topbar">
@@ -59,7 +59,12 @@ _MY_PAGE = """<!doctype html>
 {objects_block}
 
 <h2>Календарь последних 30 дней</h2>
-<div class="heatmap">{heatmap}</div>
+<div class="heatmap-wrap">
+  <div class="heatmap">{heatmap}</div>
+  <div class="heatmap-info" id="dayInfoPanel">
+    <div class="text-sm-muted">Нажми на дату в календаре, чтобы увидеть детали</div>
+  </div>
+</div>
 
 <h2>По месяцам</h2>
 <div class="chart-box"><canvas id="byMonth"></canvas></div>
@@ -67,7 +72,7 @@ _MY_PAGE = """<!doctype html>
 <h2>Мои смены</h2>
 <div class="scroll-x">
 <table>
-  <thead><tr><th>Дата</th><th>Приход</th><th>Уход</th><th>Часы</th><th>Пометка</th></tr></thead>
+  <thead><tr><th>Дата</th><th>Смена</th><th>Приход</th><th>Уход</th><th>Часы</th><th>Пометка</th></tr></thead>
   <tbody>{rows}</tbody>
 </table>
 </div>
@@ -76,6 +81,35 @@ _MY_PAGE = """<!doctype html>
 </div>
 
 <script>
+const HEATMAP_INFO = {heatmap_info_json};
+function showDayInfo(dateStr, cellEl) {{
+  document.querySelectorAll(".heatmap .cell.selected").forEach(c => c.classList.remove("selected"));
+  if (cellEl) cellEl.classList.add("selected");
+  const shifts = HEATMAP_INFO[dateStr] || [];
+  const d = new Date(dateStr + "T00:00:00");
+  const dateLbl = d.toLocaleDateString("ru-RU", {{day:"2-digit", month:"2-digit", year:"numeric", weekday:"long"}});
+  const panel = document.getElementById("dayInfoPanel");
+  let html = `<div class="heatmap-info-date">📅 ${{dateLbl}}</div>`;
+  if (!shifts.length) {{
+    html += '<p class="text-sm-muted">Смен в этот день нет</p>';
+  }} else {{
+    html += shifts.map(s => {{
+      const typeLbl = s.shift_type === "night" ? "🌙 Ночная" : "☀️ Дневная";
+      const hoursLbl = s.hours !== null ? `${{s.hours.toFixed(2)}} ч` : "смена открыта";
+      const marks = [];
+      if (s.auto) marks.push('<span class="pill auto">авто</span>');
+      if (s.late) marks.push(`<span class="pill late">${{s.late}}</span>`);
+      if (s.overtime) marks.push(`<span class="pill late">переработка ${{s.overtime}}</span>`);
+      return '<div class="comment-card" style="margin:8px 0;">' +
+        `<div class="comment-meta"><strong>${{typeLbl}}</strong></div>` +
+        `<div class="comment-body">` +
+        `${{s.arrived}} → ${{s.left ?? "—"}} · ${{hoursLbl}}` +
+        (marks.length ? '<div class="mt-sm">' + marks.join(" ") + '</div>' : '') +
+        `</div></div>`;
+    }}).join("");
+  }}
+  panel.innerHTML = html;
+}}
 const opts = {{
   responsive:true, maintainAspectRatio:false,
   plugins:{{ legend:{{ labels:{{ color:"#c9d1d9" }} }} }},
@@ -127,7 +161,7 @@ def render_my_page(worker_id: int, user: str) -> str | None:
         late_cls, _ = lateness(s)
         if late_cls in ("late", "very-late"):
             late_count += 1
-        if worker["default_end"] and s["left_at"]:
+        if worker["default_end"] and s["left_at"] and s["shift_type"] != "night":
             left = dt.datetime.fromisoformat(s["left_at"])
             sched_end = hhmm_to_time(worker["default_end"])
             sched_dt = dt.datetime.combine(d, sched_end)
@@ -136,6 +170,7 @@ def render_my_page(worker_id: int, user: str) -> str | None:
 
     avg_per_day = round(total_hours / days_with_work, 2) if days_with_work else 0
     heatmap_cells = render_heatmap(all_shifts, today)
+    heatmap_info_json = build_heatmap_info_json(all_shifts, worker)
 
     rows = []
     for s in all_shifts[:50]:
@@ -152,8 +187,10 @@ def render_my_page(worker_id: int, user: str) -> str | None:
         late_cls, late_lbl = lateness(s)
         if late_cls and s["left_at"]:
             pills.append(f'<span class="pill {late_cls}">{late_lbl}</span>')
+        shift_type_html = '🌙 Ночь' if s["shift_type"] == "night" else '☀️ День'
         rows.append(
             f'<tr><td>{arr.strftime("%d.%m.%Y")}</td>'
+            f'<td>{shift_type_html}</td>'
             f'<td>{arr.strftime("%H:%M")}</td>'
             f'<td>{left_str}</td>'
             f'<td>{f"{h:.2f}" if h is not None else "—"}</td>'
@@ -190,8 +227,9 @@ def render_my_page(worker_id: int, user: str) -> str | None:
         overtime_count=overtime_count,
         objects_block=objects_block,
         heatmap="\n".join(heatmap_cells),
+        heatmap_info_json=heatmap_info_json,
         rows="\n".join(rows) if rows else
-            '<tr><td colspan="5" class="empty-cell">Нет смен</td></tr>',
+            '<tr><td colspan="6" class="empty-cell">Нет смен</td></tr>',
         by_month_labels=json.dumps(bm_labels),
         by_month_data=json.dumps(bm_data),
         total_shifts=len(all_shifts),

@@ -1,7 +1,8 @@
 import datetime as dt
 import html as _html
+import json
 
-from utils import shift_hours
+from utils import shift_hours, lateness, hhmm_to_time
 
 LOGO_SVG = """<svg width="56" height="26" viewBox="0 0 80 36" xmlns="http://www.w3.org/2000/svg">
   <rect x="2" y="6" width="68" height="24" rx="3" fill="none" stroke="#ffd60a" stroke-width="2.5"/>
@@ -68,8 +69,13 @@ def topbar(active: str, user: str, role: str = "admin") -> str:
 
 
 def render_heatmap(all_shifts, today: dt.date) -> list[str]:
-    shift_by_date = {dt.date.fromisoformat(s["date"]): shift_hours(s)
-                     for s in all_shifts if s["left_at"]}
+    shift_by_date: dict[dt.date, float] = {}
+    for s in all_shifts:
+        if not s["left_at"]:
+            continue
+        d = dt.date.fromisoformat(s["date"])
+        shift_by_date[d] = shift_by_date.get(d, 0) + (shift_hours(s) or 0)
+
     cells = []
     start = today - dt.timedelta(days=27)
     start = start - dt.timedelta(days=start.weekday())
@@ -101,10 +107,37 @@ def render_heatmap(all_shifts, today: dt.date) -> list[str]:
         else:
             title += " · нет данных"
         cells.append(
-            f'<div class="{cls}" title="{title}">'
+            f'<div class="{cls}" title="{title}" '
+            f'onclick="showDayInfo(\'{d.isoformat()}\', this)">'
             f'<span class="d">{d.day}</span>'
             f'<span class="h">{hour_str}</span>'
             f'</div>'
         )
         d += dt.timedelta(days=1)
     return cells
+
+
+def build_heatmap_info_json(all_shifts, worker) -> str:
+    info: dict[str, list[dict]] = {}
+    for s in all_shifts:
+        arr = dt.datetime.fromisoformat(s["arrived_at"])
+        h = shift_hours(s)
+        late_cls, late_lbl = lateness(s)
+        overtime_lbl = ""
+        if (worker["default_end"] and s["left_at"] and s["shift_type"] != "night"):
+            d = dt.date.fromisoformat(s["date"])
+            left = dt.datetime.fromisoformat(s["left_at"])
+            sched_dt = dt.datetime.combine(d, hhmm_to_time(worker["default_end"]))
+            diff_min = int((left - sched_dt).total_seconds() / 60)
+            if diff_min > 30:
+                overtime_lbl = f"+{diff_min}мин"
+        info.setdefault(s["date"], []).append({
+            "shift_type": s["shift_type"] or "day",
+            "arrived": arr.strftime("%H:%M"),
+            "left": dt.datetime.fromisoformat(s["left_at"]).strftime("%H:%M") if s["left_at"] else None,
+            "hours": round(h, 2) if h is not None else None,
+            "auto": bool(s["auto_closed"]),
+            "late": late_lbl if late_cls in ("late", "very-late") else "",
+            "overtime": overtime_lbl,
+        })
+    return json.dumps(info, ensure_ascii=False)

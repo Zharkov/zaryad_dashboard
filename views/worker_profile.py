@@ -2,7 +2,7 @@ import datetime as dt
 import html
 import json
 
-from views.common import topbar, render_heatmap
+from views.common import topbar, render_heatmap, build_heatmap_info_json
 from db.workers import get_worker_by_id
 from db.shifts import get_all_shifts_for_worker
 from db.objects import get_objects
@@ -16,7 +16,7 @@ _WORKER_PAGE = """<!doctype html>
 <title>ЗАРЯД · {name}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=11">
 </head><body>
 {topbar}
 <div class="container">
@@ -47,7 +47,12 @@ _WORKER_PAGE = """<!doctype html>
 </div>
 
 <h2>Календарь последних 30 дней</h2>
-<div class="heatmap">{heatmap}</div>
+<div class="heatmap-wrap">
+  <div class="heatmap">{heatmap}</div>
+  <div class="heatmap-info" id="dayInfoPanel">
+    <div class="text-sm-muted">Нажми на дату в календаре, чтобы увидеть детали</div>
+  </div>
+</div>
 
 <h2>По месяцам</h2>
 <div class="chart-box"><canvas id="byMonth"></canvas></div>
@@ -60,7 +65,7 @@ _WORKER_PAGE = """<!doctype html>
 <div id="tab_shifts" class="tab-panel active">
 <div class="scroll-x">
 <table>
-  <thead><tr><th>Дата</th><th>Приход</th><th>Уход</th><th>Часы</th><th>Пометка</th><th></th></tr></thead>
+  <thead><tr><th>Дата</th><th>Смена</th><th>Приход</th><th>Уход</th><th>Часы</th><th>Пометка</th><th></th></tr></thead>
   <tbody>{rows}</tbody>
 </table>
 </div>
@@ -95,6 +100,13 @@ _WORKER_PAGE = """<!doctype html>
         <input type="time" id="asLeft" value="{default_end}">
       </div>
     </div>
+    <div class="row shift-type-row">
+      <label>Смена:</label>
+      <label class="shift-type-opt"><input type="radio" name="asShiftType" value="day" checked
+             data-start="{default_start}" data-end="{default_end}" onchange="updateAddShiftTimes()"> ☀️ Дневная</label>
+      <label class="shift-type-opt"><input type="radio" name="asShiftType" value="night"
+             data-start="22:00" data-end="06:00" onchange="updateAddShiftTimes()"> 🌙 Ночная</label>
+    </div>
     <div class="hint">
       Время прихода/ухода взято из графика. Уход можно стереть — смена будет открытой.
     </div>
@@ -121,6 +133,11 @@ _WORKER_PAGE = """<!doctype html>
     </div>
     <div class="hint">
       Оставь поле пустым чтобы не менять
+    </div>
+    <div class="row shift-type-row">
+      <label>Смена:</label>
+      <label class="shift-type-opt"><input type="radio" name="editShiftTypePF" value="day"> ☀️ Дневная</label>
+      <label class="shift-type-opt"><input type="radio" name="editShiftTypePF" value="night"> 🌙 Ночная</label>
     </div>
     <div id="editReopenBoxPF" class="reopen-box">
       <div class="modal-note">
@@ -163,6 +180,36 @@ _WORKER_PAGE = """<!doctype html>
 const WORKER_ID = {worker_id};
 const ALL_OBJECTS = {objects_json};
 const ATTACHED_OBJ_IDS = new Set({attached_obj_ids});
+const HEATMAP_INFO = {heatmap_info_json};
+
+function showDayInfo(dateStr, cellEl) {{
+  document.querySelectorAll(".heatmap .cell.selected").forEach(c => c.classList.remove("selected"));
+  if (cellEl) cellEl.classList.add("selected");
+  const shifts = HEATMAP_INFO[dateStr] || [];
+  const d = new Date(dateStr + "T00:00:00");
+  const dateLbl = d.toLocaleDateString("ru-RU", {{day:"2-digit", month:"2-digit", year:"numeric", weekday:"long"}});
+  const panel = document.getElementById("dayInfoPanel");
+  let html = `<div class="heatmap-info-date">📅 ${{dateLbl}}</div>`;
+  if (!shifts.length) {{
+    html += '<p class="text-sm-muted">Смен в этот день нет</p>';
+  }} else {{
+    html += shifts.map(s => {{
+      const typeLbl = s.shift_type === "night" ? "🌙 Ночная" : "☀️ Дневная";
+      const hoursLbl = s.hours !== null ? `${{s.hours.toFixed(2)}} ч` : "смена открыта";
+      const marks = [];
+      if (s.auto) marks.push('<span class="pill auto">авто</span>');
+      if (s.late) marks.push(`<span class="pill late">${{s.late}}</span>`);
+      if (s.overtime) marks.push(`<span class="pill late">переработка ${{s.overtime}}</span>`);
+      return '<div class="comment-card" style="margin:8px 0;">' +
+        `<div class="comment-meta"><strong>${{typeLbl}}</strong></div>` +
+        `<div class="comment-body">` +
+        `${{s.arrived}} → ${{s.left ?? "—"}} · ${{hoursLbl}}` +
+        (marks.length ? '<div class="mt-sm">' + marks.join(" ") + '</div>' : '') +
+        `</div></div>`;
+    }}).join("");
+  }}
+  panel.innerHTML = html;
+}}
 
 function showToast(msg, isError) {{
   const t = document.getElementById("toast");
@@ -244,20 +291,28 @@ function openAddShift() {{
   const mm = String(today.getMonth() + 1).padStart(2, "0");
   const dd = String(today.getDate()).padStart(2, "0");
   document.getElementById("asDate").value = `${{yyyy}}-${{mm}}-${{dd}}`;
+  document.querySelector('input[name="asShiftType"][value="day"]').checked = true;
+  updateAddShiftTimes();
   document.getElementById("modalAddShift").classList.add("show");
 }}
 function closeAddShift() {{ document.getElementById("modalAddShift").classList.remove("show"); }}
+function updateAddShiftTimes() {{
+  const checked = document.querySelector('input[name="asShiftType"]:checked');
+  document.getElementById("asArr").value = checked.dataset.start;
+  document.getElementById("asLeft").value = checked.dataset.end;
+}}
 async function submitAddShift() {{
   const date = document.getElementById("asDate").value;
   const arr = document.getElementById("asArr").value;
   const left = document.getElementById("asLeft").value;
+  const shiftType = document.querySelector('input[name="asShiftType"]:checked').value;
   if (!date) {{ showToast("Укажи дату", true); return; }}
   if (!arr) {{ showToast("Укажи время прихода", true); return; }}
   try {{
     const r = await fetch("/api/backdate_shift", {{
       method: "POST",
       headers: {{"Content-Type": "application/json"}},
-      body: JSON.stringify({{date, arrived: arr, left, worker_ids: [WORKER_ID]}}),
+      body: JSON.stringify({{date, arrived: arr, left, worker_ids: [WORKER_ID], shift_type: shiftType}}),
     }});
     const data = await r.json();
     if (data.ok && data.ok_count > 0) {{
@@ -307,24 +362,26 @@ async function deleteComment(id) {{
 }}
 
 let editingShiftIdPF = null;
-function editShiftFromProfile(id, arr, left, name, date) {{
+function editShiftFromProfile(id, arr, left, name, date, shiftType) {{
   editingShiftIdPF = id;
   document.getElementById("editTitlePF").textContent = `${{name}} · ${{date}}`;
   document.getElementById("editArrPF").value = arr === "—" ? "" : arr;
   document.getElementById("editLeftPF").value = left === "—" ? "" : left;
   const isClosed = left && left !== "—" && left !== "";
   document.getElementById("editReopenBoxPF").style.display = isClosed ? "block" : "none";
+  document.querySelector(`input[name="editShiftTypePF"][value="${{shiftType || "day"}}"]`).checked = true;
   document.getElementById("modalEditShiftPF").classList.add("show");
 }}
 function closeEditPF() {{ document.getElementById("modalEditShiftPF").classList.remove("show"); }}
 async function submitEditPF() {{
   const arr = document.getElementById("editArrPF").value;
   const left = document.getElementById("editLeftPF").value;
+  const shiftType = document.querySelector('input[name="editShiftTypePF"]:checked').value;
   try {{
     const r = await fetch("/api/edit_shift", {{
       method: "POST",
       headers: {{"Content-Type": "application/json"}},
-      body: JSON.stringify({{id: editingShiftIdPF, arrived: arr, left}}),
+      body: JSON.stringify({{id: editingShiftIdPF, arrived: arr, left, shift_type: shiftType}}),
     }});
     const data = await r.json();
     if (data.ok) {{
@@ -420,7 +477,7 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
         late_cls, _ = lateness(s)
         if late_cls in ("late", "very-late"):
             late_count += 1
-        if worker["default_end"] and s["left_at"]:
+        if worker["default_end"] and s["left_at"] and s["shift_type"] != "night":
             left = dt.datetime.fromisoformat(s["left_at"])
             sched_end = hhmm_to_time(worker["default_end"])
             sched_dt = dt.datetime.combine(d, sched_end)
@@ -429,6 +486,7 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
 
     avg_per_day = round(total_hours / days_with_work, 2) if days_with_work else 0
     heatmap_cells = render_heatmap(all_shifts, today)
+    heatmap_info_json = build_heatmap_info_json(all_shifts, worker)
 
     rows = []
     for s in all_shifts[:50]:
@@ -451,13 +509,15 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
         is_auto = bool(s["auto_closed"])
         is_open = s["left_at"] is None
         cls = "auto" if is_auto else ("open" if is_open else "")
+        shift_type = s["shift_type"] or "day"
+        shift_type_html = '🌙 Ночь' if shift_type == "night" else '☀️ День'
         name_js = html.escape(json.dumps(worker['name'], ensure_ascii=False), quote=True)
         date_js = html.escape(json.dumps(arr.strftime('%d.%m.%Y')), quote=True)
         click_handler = (
             f"editShiftFromProfile({s['id']},"
             f"'{arr.strftime('%H:%M')}',"
             f"'{left_time_for_js}',"
-            f"{name_js},{date_js})"
+            f"{name_js},{date_js},'{shift_type}')"
         )
         edit_btn = (
             f'<button class="btn btn-sm" '
@@ -466,6 +526,7 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
         rows.append(
             f'<tr class="hover-row {cls}" onclick="{click_handler}">'
             f'<td>{arr.strftime("%d.%m.%Y")}</td>'
+            f'<td>{shift_type_html}</td>'
             f'<td>{arr.strftime("%H:%M")}</td>'
             f'<td>{left_str}</td>'
             f'<td>{f"{h:.2f}" if h is not None else "—"}</td>'
@@ -538,8 +599,9 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
         objects_json=json.dumps(objects_data, ensure_ascii=False),
         attached_obj_ids=json.dumps(attached_obj_ids),
         heatmap="\n".join(heatmap_cells),
+        heatmap_info_json=heatmap_info_json,
         rows="\n".join(rows) if rows else
-            '<tr><td colspan="6" class="empty-cell">Нет смен</td></tr>',
+            '<tr><td colspan="7" class="empty-cell">Нет смен</td></tr>',
         by_month_labels=json.dumps(bm_labels),
         by_month_data=json.dumps(bm_data),
         total_shifts=len(all_shifts),

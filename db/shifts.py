@@ -44,46 +44,50 @@ def get_all_shifts_for_worker(worker_id: int):
         ))
 
 
-def create_arrival(worker_id: int, when: dt.datetime, user: str) -> tuple[bool, str]:
+def create_arrival(worker_id: int, when: dt.datetime, user: str,
+                   shift_type: str = "day") -> tuple[bool, str]:
     date = when.date().isoformat()
     with db_conn() as c:
         existing = c.execute(
-            "SELECT * FROM shifts WHERE worker_id = ? AND date = ?",
-            (worker_id, date),
+            "SELECT * FROM shifts WHERE worker_id = ? AND date = ? AND shift_type = ?",
+            (worker_id, date, shift_type),
         ).fetchone()
         if existing:
             ar = dt.datetime.fromisoformat(existing["arrived_at"])
             return False, f"уже отмечен приход в {ar.strftime('%H:%M')}"
         try:
             cur = c.execute(
-                "INSERT INTO shifts (worker_id, date, arrived_at) VALUES (?, ?, ?)",
-                (worker_id, date, when.isoformat()),
+                "INSERT INTO shifts (worker_id, date, shift_type, arrived_at) VALUES (?, ?, ?, ?)",
+                (worker_id, date, shift_type, when.isoformat()),
             )
             audit(c, "create_arrival", cur.lastrowid,
-                  {"worker_id": worker_id, "arrived_at": when.isoformat()}, user)
+                  {"worker_id": worker_id, "arrived_at": when.isoformat(),
+                   "shift_type": shift_type}, user)
             return True, "OK"
         except sqlite3.IntegrityError as e:
             return False, str(e)
 
 
 def create_full_shift(worker_id: int, arr_dt: dt.datetime,
-                      left_dt: dt.datetime | None, user: str) -> tuple[bool, str]:
+                      left_dt: dt.datetime | None, user: str,
+                      shift_type: str = "day") -> tuple[bool, str]:
     if left_dt and left_dt <= arr_dt:
         return False, "уход не позже прихода"
     date_str = arr_dt.date().isoformat()
     with db_conn() as c:
         if c.execute(
-            "SELECT id FROM shifts WHERE worker_id = ? AND date = ?",
-            (worker_id, date_str),
+            "SELECT id FROM shifts WHERE worker_id = ? AND date = ? AND shift_type = ?",
+            (worker_id, date_str, shift_type),
         ).fetchone():
             return False, "уже есть запись за этот день"
         cur = c.execute(
-            "INSERT INTO shifts (worker_id, date, arrived_at, left_at) VALUES (?, ?, ?, ?)",
-            (worker_id, date_str, arr_dt.isoformat(),
+            "INSERT INTO shifts (worker_id, date, shift_type, arrived_at, left_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (worker_id, date_str, shift_type, arr_dt.isoformat(),
              left_dt.isoformat() if left_dt else None),
         )
         audit(c, "backdate_shift", cur.lastrowid, {
-            "worker_id": worker_id, "date": date_str,
+            "worker_id": worker_id, "date": date_str, "shift_type": shift_type,
             "arrived_at": arr_dt.isoformat(),
             "left_at": left_dt.isoformat() if left_dt else None,
         }, user)
@@ -110,7 +114,8 @@ def set_departure(worker_id: int, when: dt.datetime, user: str) -> tuple[bool, s
 
 
 def update_shift(shift_id: int, arrived_at: dt.datetime | None,
-                 left_at: dt.datetime | None, user: str) -> tuple[bool, str]:
+                 left_at: dt.datetime | None, user: str,
+                 shift_type: str | None = None) -> tuple[bool, str]:
     with db_conn() as c:
         row = c.execute("SELECT * FROM shifts WHERE id = ?", (shift_id,)).fetchone()
         if not row:
@@ -123,12 +128,19 @@ def update_shift(shift_id: int, arrived_at: dt.datetime | None,
             fields.append("left_at = ?")
             params.append(left_at.isoformat())
             fields.append("auto_closed = 0")
+        if shift_type is not None:
+            fields.append("shift_type = ?")
+            params.append(shift_type)
         if not fields:
             return False, "Нечего менять"
         params.append(shift_id)
-        c.execute(f"UPDATE shifts SET {', '.join(fields)} WHERE id = ?", params)
+        try:
+            c.execute(f"UPDATE shifts SET {', '.join(fields)} WHERE id = ?", params)
+        except sqlite3.IntegrityError:
+            return False, "У работника уже есть смена этого типа за эту дату"
         audit(c, "edit_shift", shift_id,
-              {"arrived_at": str(arrived_at), "left_at": str(left_at)}, user)
+              {"arrived_at": str(arrived_at), "left_at": str(left_at),
+               "shift_type": shift_type}, user)
     return True, "OK"
 
 

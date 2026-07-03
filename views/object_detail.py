@@ -13,7 +13,7 @@ _OBJECT_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · {name}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/static/style.css?v=7">
+<link rel="stylesheet" href="/static/style.css?v=11">
 </head><body>
 {topbar}
 <div class="container">

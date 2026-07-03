@@ -131,6 +131,9 @@ class PostRoutesMixin:
         action = data.get("action")
         time_str = data.get("time", "")
         worker_ids = data.get("worker_ids", [])
+        shift_type = data.get("shift_type") or "day"
+        if shift_type not in ("day", "night"):
+            shift_type = "day"
         if action not in ("arr", "dep") or not time_str or not worker_ids:
             self._send_json({"error": "invalid params"}, 400)
             return
@@ -144,7 +147,7 @@ class PostRoutesMixin:
         ok_count = err_count = 0
         for wid in worker_ids:
             if action == "arr":
-                ok, _ = create_arrival(wid, mark_dt, admin)
+                ok, _ = create_arrival(wid, mark_dt, admin, shift_type)
             else:
                 ok, _ = set_departure(wid, mark_dt, admin)
             if ok:
@@ -162,6 +165,9 @@ class PostRoutesMixin:
         arrived_str = data.get("arrived", "")
         left_str = data.get("left", "")
         worker_ids = data.get("worker_ids", [])
+        shift_type = data.get("shift_type") or "day"
+        if shift_type not in ("day", "night"):
+            shift_type = "day"
         if not date_str or not arrived_str or not worker_ids:
             self._send_json({"error": "invalid params"}, 400)
             return
@@ -181,15 +187,17 @@ class PostRoutesMixin:
             try:
                 lh, lm = map(int, left_str.split(":"))
                 left_dt = dt.datetime(d.year, d.month, d.day, lh, lm)
+                if left_dt <= arr_dt:
+                    left_dt += dt.timedelta(days=1)
             except Exception:
                 pass
         ok_count = skip_count = 0
         errors = []
         for wid in worker_ids:
             if left_dt:
-                ok, msg = create_full_shift(wid, arr_dt, left_dt, admin)
+                ok, msg = create_full_shift(wid, arr_dt, left_dt, admin, shift_type)
             else:
-                ok, msg = create_arrival(wid, arr_dt, admin)
+                ok, msg = create_arrival(wid, arr_dt, admin, shift_type)
             if ok:
                 ok_count += 1
             else:
@@ -205,6 +213,9 @@ class PostRoutesMixin:
         shift_id = data.get("id")
         arrived_str = data.get("arrived", "")
         left_str = data.get("left", "")
+        shift_type = data.get("shift_type")
+        if shift_type not in ("day", "night"):
+            shift_type = None
         if not shift_id:
             self._send_json({"error": "no id"}, 400)
             return
@@ -225,9 +236,12 @@ class PostRoutesMixin:
             try:
                 lh, lm = map(int, left_str.split(":"))
                 left_dt = dt.datetime(base_date.year, base_date.month, base_date.day, lh, lm)
+                effective_arr = arr_dt or dt.datetime.fromisoformat(shift["arrived_at"])
+                if left_dt <= effective_arr:
+                    left_dt += dt.timedelta(days=1)
             except Exception:
                 pass
-        ok, msg = update_shift(shift_id, arr_dt, left_dt, admin)
+        ok, msg = update_shift(shift_id, arr_dt, left_dt, admin, shift_type)
         if ok:
             self._send_json({"ok": True})
         else:

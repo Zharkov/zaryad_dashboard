@@ -24,10 +24,11 @@ def db_migrate():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
             date TEXT NOT NULL,
+            shift_type TEXT NOT NULL DEFAULT 'day',
             arrived_at TEXT NOT NULL,
             left_at TEXT,
             auto_closed INTEGER NOT NULL DEFAULT 0,
-            UNIQUE(worker_id, date)
+            UNIQUE(worker_id, date, shift_type)
         );
         CREATE INDEX IF NOT EXISTS idx_shifts_date ON shifts(date);
         CREATE INDEX IF NOT EXISTS idx_shifts_worker ON shifts(worker_id);
@@ -100,3 +101,28 @@ def db_migrate():
             c.execute("ALTER TABLE admin_users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'")
     except Exception:
         pass
+
+    # shifts: add shift_type + widen UNIQUE(worker_id, date) -> (worker_id, date, shift_type)
+    # SQLite can't ALTER a UNIQUE constraint in place, so rebuild the table.
+    with db_conn() as c:
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(shifts)")]
+        if "shift_type" not in cols:
+            c.execute("PRAGMA foreign_keys = OFF")
+            c.executescript("""
+            CREATE TABLE shifts_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+                date TEXT NOT NULL,
+                shift_type TEXT NOT NULL DEFAULT 'day',
+                arrived_at TEXT NOT NULL,
+                left_at TEXT,
+                auto_closed INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(worker_id, date, shift_type)
+            );
+            INSERT INTO shifts_new (id, worker_id, date, shift_type, arrived_at, left_at, auto_closed)
+                SELECT id, worker_id, date, 'day', arrived_at, left_at, auto_closed FROM shifts;
+            DROP TABLE shifts;
+            ALTER TABLE shifts_new RENAME TO shifts;
+            CREATE INDEX IF NOT EXISTS idx_shifts_date ON shifts(date);
+            CREATE INDEX IF NOT EXISTS idx_shifts_worker ON shifts(worker_id);
+            """)

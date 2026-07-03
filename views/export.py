@@ -45,7 +45,7 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
         if late_cls in ("late", "very-late"):
             st["late"] += 1
 
-        if s["left_at"] and s["default_end"]:
+        if s["left_at"] and s["default_end"] and s["shift_type"] != "night":
             d = dt.date.fromisoformat(s["date"])
             left = dt.datetime.fromisoformat(s["left_at"])
             sched_dt = dt.datetime.combine(d, hhmm_to_time(s["default_end"]))
@@ -107,7 +107,7 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
     wr.writerow([
         "Дата", "Работник", "График",
         "Приход", "Уход", "Часов",
-        "Опоздание", "Статус",
+        "Опоздание", "Статус", "Смена",
     ])
 
     for s in sorted(shifts, key=lambda x: (x["worker_name"], x["date"])):
@@ -132,6 +132,7 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
             _dec(h) if h is not None else "",
             late_lbl if late_cls else "",
             status,
+            "Ночная" if s["shift_type"] == "night" else "Дневная",
         ])
 
     return ("﻿" + buf.getvalue()).encode("utf-8")
@@ -174,7 +175,7 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
         late_cls, _ = lateness(s)
         if late_cls in ("late", "very-late"):
             st["late"] += 1
-        if s["left_at"] and s["default_end"]:
+        if s["left_at"] and s["default_end"] and s["shift_type"] != "night":
             d = dt.date.fromisoformat(s["date"])
             left = dt.datetime.fromisoformat(s["left_at"])
             sched_dt = dt.datetime.combine(d, hhmm_to_time(s["default_end"]))
@@ -243,10 +244,10 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
 
     # --- Detail ---
     ws.cell(r, 1, "ДЕТАЛИЗАЦИЯ ПО СМЕНАМ").font = Font(bold=True, size=11)
-    ws.merge_cells(f"A{r}:H{r}")
+    ws.merge_cells(f"A{r}:I{r}")
     r += 1
     for col, h in enumerate(
-        ["Дата", "Работник", "График", "Приход", "Уход", "Часов", "Опоздание", "Статус"], 1
+        ["Дата", "Работник", "График", "Приход", "Уход", "Часов", "Опоздание", "Статус", "Смена"], 1
     ):
         cell = ws.cell(r, col, h)
         cell.font = white_bold
@@ -265,11 +266,12 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
             arr.strftime("%H:%M"), left_str,
             round(h, 2) if h is not None else "",
             late_lbl if late_cls else "", status,
+            "Ночная" if s["shift_type"] == "night" else "Дневная",
         ], 1):
             ws.cell(r, col, val)
         r += 1
 
-    for i, width in enumerate([18, 24, 14, 10, 10, 10, 14, 10], 1):
+    for i, width in enumerate([18, 24, 14, 10, 10, 10, 14, 10, 10], 1):
         ws.column_dimensions[get_column_letter(i)].width = width
 
     buf = io.BytesIO()
