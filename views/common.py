@@ -44,7 +44,8 @@ def topbar(active: str, user: str, role: str = "admin") -> str:
     <button class="burger" id="burgerBtn" aria-label="Меню">☰</button>
   </div>
 </div>
-<button class="scroll-top" id="scrollTopBtn" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" title="Наверх">↑</button>
+<button class="scroll-top" id="scrollTopBtn" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" title="Наверх" aria-label="Наверх">↑</button>
+<script src="/static/app.js?v=1"></script>
 <script>
 (function(){{
   var nav = document.getElementById('mainNav');

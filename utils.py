@@ -16,8 +16,25 @@ PERIOD_LABELS = {
 }
 
 
+VALID_PERIODS = set(PERIOD_LABELS.keys())
+
+
 def now_msk() -> dt.datetime:
     return dt.datetime.now(TZ).replace(tzinfo=None)
+
+
+def safe_period(period: str) -> str:
+    return period if period in VALID_PERIODS else "week"
+
+
+def safe_date_str(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        dt.date.fromisoformat(value)
+        return value
+    except ValueError:
+        return ""
 
 
 def hhmm_to_time(hhmm: str) -> dt.time:

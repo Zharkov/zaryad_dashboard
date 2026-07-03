@@ -11,21 +11,20 @@ def _dec(value: float) -> str:
     return f"{value:.2f}".replace(".", ",")
 
 
-def render_csv(period: str, custom_from: str = "", custom_to: str = "",
-               search: str = "") -> bytes:
-    date_from, date_to = parse_period(period, custom_from, custom_to)
-    shifts = get_shifts(date_from, date_to)
-    if search:
-        search_low = search.lower().strip()
-        shifts = [s for s in shifts if search_low in s["worker_name"].lower()]
+def _csv_safe(value: str) -> str:
+    """Экранирует ведущий =+-@, чтобы Excel/Sheets не воспринял значение как формулу."""
+    if value and value[0] in ("=", "+", "-", "@"):
+        return "'" + value
+    return value
 
-    # ── Сводка по работникам ─────────────────────────────────────────────────
+
+def _build_stats(shifts: list) -> dict[int, dict]:
     stats: dict[int, dict] = {}
     for s in shifts:
         wid = s["worker_id"]
         if wid not in stats:
             stats[wid] = {
-                "name": s["worker_name"],
+                "name": _csv_safe(s["worker_name"]),
                 "schedule": f"{s['default_start'] or '?'}–{s['default_end'] or '?'}",
                 "shifts": 0,
                 "hours": 0.0,
@@ -57,6 +56,19 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
             sched_dt = dt.datetime.combine(d, hhmm_to_time(s["default_end"]))
             if (left - sched_dt).total_seconds() > 30 * 60:
                 st["overtime"] += 1
+    return stats
+
+
+def render_csv(period: str, custom_from: str = "", custom_to: str = "",
+               search: str = "") -> bytes:
+    date_from, date_to = parse_period(period, custom_from, custom_to)
+    shifts = get_shifts(date_from, date_to)
+    if search:
+        search_low = search.lower().strip()
+        shifts = [s for s in shifts if search_low in s["worker_name"].lower()]
+
+    # ── Сводка по работникам ─────────────────────────────────────────────────
+    stats = _build_stats(shifts)
 
     # ── Формируем CSV ────────────────────────────────────────────────────────
     buf = io.StringIO()
@@ -70,7 +82,7 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
     wr.writerow(["ЗАРЯД · Табель учёта рабочего времени"])
     wr.writerow(["Период:", f"{period_label}  {df_str} — {dt_str}"])
     if search:
-        wr.writerow(["Фильтр:", search])
+        wr.writerow(["Фильтр:", _csv_safe(search)])
     wr.writerow([])
 
     # ── Раздел 1: сводка ─────────────────────────────────────────────────────
@@ -139,7 +151,7 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
             status = ""
         wr.writerow([
             arr.strftime("%d.%m.%Y"),
-            s["worker_name"],
+            _csv_safe(s["worker_name"]),
             f"{s['default_start'] or '?'}–{s['default_end'] or '?'}",
             arr.strftime("%H:%M"),
             left_str,
@@ -170,36 +182,7 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
         shifts = [s for s in shifts if search_low in s["worker_name"].lower()]
 
     # Build stats (same logic as render_csv)
-    stats: dict[int, dict] = {}
-    for s in shifts:
-        wid = s["worker_id"]
-        if wid not in stats:
-            stats[wid] = {
-                "name": s["worker_name"],
-                "schedule": f"{s['default_start'] or '?'}–{s['default_end'] or '?'}",
-                "shifts": 0, "hours": 0.0, "day_hours": 0.0, "night_hours": 0.0,
-                "late": 0, "overtime": 0, "open": 0,
-            }
-        st = stats[wid]
-        st["shifts"] += 1
-        h = shift_hours(s)
-        if h is not None:
-            st["hours"] += h
-            if s["shift_type"] == "night":
-                st["night_hours"] += h
-            else:
-                st["day_hours"] += h
-        else:
-            st["open"] += 1
-        late_cls, _ = lateness(s)
-        if late_cls in ("late", "very-late"):
-            st["late"] += 1
-        if s["left_at"] and s["default_end"] and s["shift_type"] != "night":
-            d = dt.date.fromisoformat(s["date"])
-            left = dt.datetime.fromisoformat(s["left_at"])
-            sched_dt = dt.datetime.combine(d, hhmm_to_time(s["default_end"]))
-            if (left - sched_dt).total_seconds() > 30 * 60:
-                st["overtime"] += 1
+    stats = _build_stats(shifts)
 
     wb = Workbook()
     ws = wb.active
@@ -224,7 +207,7 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
     r += 1
     if search:
         ws.cell(r, 1, "Фильтр:").font = bold
-        ws.cell(r, 2, search)
+        ws.cell(r, 2, _csv_safe(search))
         r += 1
     r += 1
 
@@ -289,7 +272,7 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
         late_cls, late_lbl = lateness(s)
         status = "открыта" if not s["left_at"] else ("авто" if s["auto_closed"] else "")
         for col, val in enumerate([
-            arr.strftime("%d.%m.%Y"), s["worker_name"],
+            arr.strftime("%d.%m.%Y"), _csv_safe(s["worker_name"]),
             f"{s['default_start'] or '?'}–{s['default_end'] or '?'}",
             arr.strftime("%H:%M"), left_str,
             round(h, 2) if h is not None else "",

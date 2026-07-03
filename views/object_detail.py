@@ -80,13 +80,6 @@ const OBJECT_ID = {object_id};
 const ALL_WORKERS = {workers_json};
 const ATTACHED_IDS = new Set({attached_ids});
 
-function showToast(msg, isError) {{
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.className = "toast show" + (isError ? " error" : "");
-  setTimeout(() => t.classList.remove("show"), 2500);
-}}
-
 function openAttach() {{
   document.getElementById("attSearch").value = "";
   attRender();
@@ -157,13 +150,6 @@ async function submitAttach() {{
       setTimeout(()=>location.reload(), 500);
     }} else {{ showToast(d.error || "Ошибка", true); }}
   }} catch (e) {{ showToast("Сеть: " + e.message, true); }}
-}}
-
-function switchTab(name, btn) {{
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('tab_' + name).classList.add('active');
 }}
 
 async function submitComment() {{

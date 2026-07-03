@@ -1,11 +1,14 @@
 import json
+import logging
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
+
+_access_log = logging.getLogger("zaryad.access")
 
 
 class BaseHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        pass
+        _access_log.info("%s %s", self.client_address[0], fmt % args)
 
     def _send(self, code: int, body: str | bytes, content_type: str = "text/html; charset=utf-8"):
         if isinstance(body, str):
@@ -62,8 +65,11 @@ class BaseHandler(BaseHTTPRequestHandler):
                 return get_session_user(kv[1].strip())
         return None
 
-    def _set_session_cookie(self, token: str):
-        self.send_header("Set-Cookie", f"session={token}; Path=/; HttpOnly; SameSite=Lax")
+    def _set_session_cookie(self, token: str, ttl_days: int | None = None):
+        cookie = f"session={token}; Path=/; HttpOnly; SameSite=Lax"
+        if ttl_days is not None:
+            cookie += f"; Max-Age={ttl_days * 86400}"
+        self.send_header("Set-Cookie", cookie)
 
     def _clear_session_cookie(self):
         self.send_header("Set-Cookie", "session=; Path=/; HttpOnly; Max-Age=0")

@@ -21,6 +21,8 @@ from db.credentials import (
     block_worker_credential, unblock_worker_credential,
 )
 from utils import now_msk
+from login_throttle import is_locked, register_failure, register_success
+from config import SESSION_TTL_DAYS, SESSION_TTL_SHORT_DAYS
 
 
 class PostRoutesMixin:
@@ -92,7 +94,10 @@ class PostRoutesMixin:
             elif is_accountant:
                 self._send_json({"ok": False, "error": "Только просмотр"}, 403)
             else:
-                handler(user)
+                try:
+                    handler(user)
+                except (TypeError, ValueError):
+                    self._send_json({"ok": False, "error": "Некорректные параметры"}, 400)
         else:
             self._not_found()
 
@@ -100,25 +105,37 @@ class PostRoutesMixin:
         body = self._read_body_form()
         username = (body.get("username", [""])[0] or "").strip()
         password = (body.get("password", [""])[0] or "").strip()
+        remember = (body.get("remember", [""])[0] or "") == "1"
+        ttl_days = SESSION_TTL_DAYS if remember else SESSION_TTL_SHORT_DAYS
 
         if username and password:
+            from views import render_login
+            if is_locked(username):
+                self._send(200, render_login(
+                    error="Слишком много неудачных попыток. Попробуй через несколько минут."))
+                return
+
             role = authenticate_admin(username, password)
             if role:
-                token = create_session(username, role=role)
+                register_success(username)
+                token = create_session(username, role=role, ttl_days=ttl_days)
                 self.send_response(303)
-                self._set_session_cookie(token)
+                self._set_session_cookie(token, ttl_days=ttl_days)
                 self.send_header("Location", "/")
                 self.end_headers()
                 return
 
             worker_id = authenticate_worker(username, password)
             if worker_id:
-                token = create_session(username, role="worker", worker_id=worker_id)
+                register_success(username)
+                token = create_session(username, role="worker", worker_id=worker_id, ttl_days=ttl_days)
                 self.send_response(303)
-                self._set_session_cookie(token)
+                self._set_session_cookie(token, ttl_days=ttl_days)
                 self.send_header("Location", "/my")
                 self.end_headers()
                 return
+
+            register_failure(username)
 
         from views import render_login
         self._send(200, render_login(error="Неверный логин или пароль"))

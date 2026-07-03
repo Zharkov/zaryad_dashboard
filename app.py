@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
+import logging
 import sys
 import threading
 from http.server import ThreadingHTTPServer
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from config import HOST, PORT
 from db.conn import db_migrate
@@ -11,7 +14,20 @@ from sessions import cleanup_sessions_loop
 from handler import Handler
 
 
+def _setup_access_log():
+    log_dir = Path(__file__).parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    handler = RotatingFileHandler(
+        log_dir / "access.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    logger = logging.getLogger("zaryad.access")
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+
+
 def main():
+    _setup_access_log()
     db_migrate()
 
     if get_admin_count() == 0:

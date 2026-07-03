@@ -15,9 +15,10 @@ def create_session(
     user: str,
     role: str = "admin",
     worker_id: int | None = None,
+    ttl_days: int | None = None,
 ) -> str:
     token = secrets.token_urlsafe(32)
-    expires = now_msk() + dt.timedelta(days=SESSION_TTL_DAYS)
+    expires = now_msk() + dt.timedelta(days=ttl_days if ttl_days is not None else SESSION_TTL_DAYS)
     log_id = log_login(user, role, worker_id)
     with SESSIONS_LOCK:
         SESSIONS[token] = {

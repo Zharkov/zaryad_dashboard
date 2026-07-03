@@ -109,13 +109,6 @@ _USERS_PAGE = """<!doctype html>
 <script>
 const ME = {me_js};
 
-function showToast(msg, isError) {{
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.className = "toast show" + (isError ? " error" : "");
-  setTimeout(() => t.classList.remove("show"), 2500);
-}}
-
 function filterRole(role, btn) {{
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');

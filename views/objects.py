@@ -80,35 +80,7 @@ _OBJECTS_PAGE = """<!doctype html>
 <script>
 let editingObjectId = null;
 
-let _searchTimer = null;
-let _searchSeq = 0;
-function debouncedSearch(val) {{
-  clearTimeout(_searchTimer);
-  _searchTimer = setTimeout(function() {{ runSearch(val); }}, 300);
-}}
-async function runSearch(val) {{
-  const seq = ++_searchSeq;
-  const u = new URL(location.href);
-  if (val) u.searchParams.set('search', val);
-  else u.searchParams.delete('search');
-  history.replaceState(null, '', u.toString());
-  try {{
-    const r = await fetch('/api/search_objects?search=' + encodeURIComponent(val));
-    const d = await r.json();
-    if (seq !== _searchSeq) return;
-    if (d.ok) {{
-      document.getElementById('objectsBody').innerHTML = d.rows;
-      document.getElementById('objectsTotal').textContent = d.total;
-    }}
-  }} catch (e) {{}}
-}}
-
-function showToast(msg, isError) {{
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.className = "toast show" + (isError ? " error" : "");
-  setTimeout(() => t.classList.remove("show"), 2500);
-}}
+const debouncedSearch = makeAjaxSearch('/api/search_objects', 'objectsBody', 'objectsTotal');
 
 function openAddObject() {{
   document.getElementById("addOName").value = "";

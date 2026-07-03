@@ -8,6 +8,7 @@ from views import (
     render_users,
 )
 from sessions import get_session
+from utils import safe_period, safe_date_str
 
 _STATIC_DIR = Path(__file__).parent.parent / "static"
 _MIME = {".css": "text/css", ".js": "application/javascript",
@@ -83,10 +84,10 @@ class GetRoutesMixin:
                 body = render_my_page(worker_id, user)
                 self._send(200, body or "<h1>404</h1>")
             else:
-                period = self._qs_get("period", "week")
+                period = safe_period(self._qs_get("period", "week"))
                 search = self._qs_get("search", "")
-                custom_from = self._qs_get("from", "")
-                custom_to = self._qs_get("to", "")
+                custom_from = safe_date_str(self._qs_get("from", ""))
+                custom_to = safe_date_str(self._qs_get("to", ""))
                 self._send(200, render_dashboard(period, search, user, custom_from, custom_to, is_accountant=is_accountant_role))
             return
 
@@ -100,6 +101,10 @@ class GetRoutesMixin:
             return
 
         if is_worker_role:
+            self._send(403, "<h1>403 — доступ закрыт</h1>")
+            return
+
+        if is_accountant_role and path not in ("/export", "/export_xlsx"):
             self._send(403, "<h1>403 — доступ закрыт</h1>")
             return
 
@@ -172,16 +177,13 @@ class GetRoutesMixin:
             return
 
         if path == "/users":
-            if is_accountant_role:
-                self._send(403, "<h1>403 — доступ закрыт</h1>")
-                return
             self._send(200, render_users(user))
             return
 
         if path == "/export":
-            period = self._qs_get("period", "week")
-            custom_from = self._qs_get("from", "")
-            custom_to = self._qs_get("to", "")
+            period = safe_period(self._qs_get("period", "week"))
+            custom_from = safe_date_str(self._qs_get("from", ""))
+            custom_to = safe_date_str(self._qs_get("to", ""))
             search = self._qs_get("search", "")
             data = render_csv(period, custom_from, custom_to, search)
             self.send_response(200)
@@ -194,9 +196,9 @@ class GetRoutesMixin:
             return
 
         if path == "/export_xlsx":
-            period = self._qs_get("period", "week")
-            custom_from = self._qs_get("from", "")
-            custom_to = self._qs_get("to", "")
+            period = safe_period(self._qs_get("period", "week"))
+            custom_from = safe_date_str(self._qs_get("from", ""))
+            custom_to = safe_date_str(self._qs_get("to", ""))
             search = self._qs_get("search", "")
             data = render_xlsx(period, custom_from, custom_to, search)
             self.send_response(200)

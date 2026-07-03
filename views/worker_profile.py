@@ -15,7 +15,6 @@ _WORKER_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · {name}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <link rel="stylesheet" href="/static/style.css?v=11">
 </head><body>
 {topbar}
@@ -211,13 +210,6 @@ function showDayInfo(dateStr, cellEl) {{
   panel.innerHTML = html;
 }}
 
-function showToast(msg, isError) {{
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.className = "toast show" + (isError ? " error" : "");
-  setTimeout(() => t.classList.remove("show"), 2500);
-}}
-
 function openAttachObj() {{
   document.getElementById("aoSearch").value = "";
   aoRender();
@@ -327,13 +319,6 @@ async function submitAddShift() {{
   }} catch (e) {{ showToast("Сеть: " + e.message, true); }}
 }}
 
-function switchTab(name, btn) {{
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('tab_' + name).classList.add('active');
-}}
-
 async function submitComment() {{
   const text = document.getElementById('commentText').value.trim();
   if (!text) {{ showToast('Введи текст', true); return; }}
@@ -425,6 +410,7 @@ async function deleteShiftPF() {{
 }}
 </script>
 
+<script src="/static/chart.min.js"></script>
 <script>
 const opts = {{
   responsive:true, maintainAspectRatio:false,

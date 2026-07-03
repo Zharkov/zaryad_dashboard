@@ -16,7 +16,6 @@ _DASHBOARD_HTML = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · Дашборд</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <link rel="stylesheet" href="/static/style.css?v=11">
 </head><body>
 
@@ -229,6 +228,7 @@ _DASHBOARD_HTML = """<!doctype html>
   <div class="pig-label">Свиня</div>
 </div>
 
+<script src="/static/chart.min.js"></script>
 <script>
 const WORKERS = {workers_json};
 const IS_ACCOUNTANT = {is_accountant_js};
@@ -249,13 +249,6 @@ function debouncedSearch(val) {{
 if (location.hash === '#detail') {{
   history.replaceState(null, '', location.pathname + location.search);
   document.getElementById('detail').scrollIntoView({{block: 'start'}});
-}}
-
-function showToast(msg, isError) {{
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.className = "toast show" + (isError ? " error" : "");
-  setTimeout(() => t.classList.remove("show"), 2500);
 }}
 
 const chartOpts = {{
@@ -643,6 +636,8 @@ async function deleteShift() {{
 
 setInterval(() => {{
   if (document.querySelector(".modal-bg.show")) return;
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT")) return;
   location.reload();
 }}, 30000);
 
@@ -983,12 +978,12 @@ def render_dashboard(period: str, search: str, user: str,
 
     return _DASHBOARD_HTML.format(
         topbar=topbar("dashboard", user, role="accountant" if is_accountant else "admin"),
-        period_label=PERIOD_LABELS.get(period, period),
-        period=period,
+        period_label=html.escape(PERIOD_LABELS.get(period, period)),
+        period=html.escape(period),
         period_links=period_links,
         custom_active=custom_active,
-        cal_from=cal_from,
-        cal_to=cal_to,
+        cal_from=html.escape(cal_from),
+        cal_to=html.escape(cal_to),
         cal_display_style=cal_display_style,
         search_value=html.escape(search),
         date_from=date_from.strftime("%d.%m.%Y"),

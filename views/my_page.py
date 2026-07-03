@@ -13,7 +13,6 @@ _MY_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · {name}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <link rel="stylesheet" href="/static/style.css?v=11">
 </head><body>
 
@@ -80,6 +79,7 @@ _MY_PAGE = """<!doctype html>
 <div class="footer">{name} · {total_shifts} смен</div>
 </div>
 
+<script src="/static/chart.min.js"></script>
 <script>
 const HEATMAP_INFO = {heatmap_info_json};
 function showDayInfo(dateStr, cellEl) {{

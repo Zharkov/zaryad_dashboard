@@ -25,5 +25,6 @@ DB_PATH = os.environ.get("WORKTIME_DB", str(Path(__file__).parent / "worktime.db
 PORT = int(os.environ.get("WEB_PORT", "9090"))
 HOST = os.environ.get("WEB_HOST", "0.0.0.0")
 SESSION_TTL_DAYS = 30
+SESSION_TTL_SHORT_DAYS = 1
 
 TZ = dt.timezone(dt.timedelta(hours=3))
