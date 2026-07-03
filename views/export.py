@@ -29,6 +29,8 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
                 "schedule": f"{s['default_start'] or '?'}–{s['default_end'] or '?'}",
                 "shifts": 0,
                 "hours": 0.0,
+                "day_hours": 0.0,
+                "night_hours": 0.0,
                 "late": 0,
                 "overtime": 0,
                 "open": 0,
@@ -38,6 +40,10 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
         h = shift_hours(s)
         if h is not None:
             st["hours"] += h
+            if s["shift_type"] == "night":
+                st["night_hours"] += h
+            else:
+                st["day_hours"] += h
         else:
             st["open"] += 1
 
@@ -70,12 +76,14 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
     # ── Раздел 1: сводка ─────────────────────────────────────────────────────
     wr.writerow(["СВОДКА ПО РАБОТНИКАМ"])
     wr.writerow([
-        "ФИО", "График", "Смен", "Часов всего",
+        "ФИО", "График", "Смен", "Дневная смена", "Ночная смена", "Общее время",
         "Среднее в день", "Опозданий", "Переработок", "Незакр. смен",
     ])
 
     total_shifts = 0
     total_hours = 0.0
+    total_day_hours = 0.0
+    total_night_hours = 0.0
 
     for st in sorted(stats.values(), key=lambda x: x["name"]):
         closed = st["shifts"] - st["open"]
@@ -84,6 +92,8 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
             st["name"],
             st["schedule"],
             st["shifts"],
+            _dec(st["day_hours"]),
+            _dec(st["night_hours"]),
             _dec(st["hours"]),
             _dec(avg),
             st["late"] or "",
@@ -92,11 +102,15 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
         ])
         total_shifts += st["shifts"]
         total_hours += st["hours"]
+        total_day_hours += st["day_hours"]
+        total_night_hours += st["night_hours"]
 
     # Итоговая строка
     wr.writerow([
         "ИТОГО", "",
         total_shifts,
+        _dec(total_day_hours),
+        _dec(total_night_hours),
         _dec(total_hours),
         "", "", "", "",
     ])
@@ -163,13 +177,18 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
             stats[wid] = {
                 "name": s["worker_name"],
                 "schedule": f"{s['default_start'] or '?'}–{s['default_end'] or '?'}",
-                "shifts": 0, "hours": 0.0, "late": 0, "overtime": 0, "open": 0,
+                "shifts": 0, "hours": 0.0, "day_hours": 0.0, "night_hours": 0.0,
+                "late": 0, "overtime": 0, "open": 0,
             }
         st = stats[wid]
         st["shifts"] += 1
         h = shift_hours(s)
         if h is not None:
             st["hours"] += h
+            if s["shift_type"] == "night":
+                st["night_hours"] += h
+            else:
+                st["day_hours"] += h
         else:
             st["open"] += 1
         late_cls, _ = lateness(s)
@@ -198,7 +217,7 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
 
     r = 1
     ws.cell(r, 1, "ЗАРЯД · Табель учёта рабочего времени").font = Font(bold=True, size=13)
-    ws.merge_cells(f"A{r}:H{r}")
+    ws.merge_cells(f"A{r}:J{r}")
     r += 1
     ws.cell(r, 1, "Период:").font = bold
     ws.cell(r, 2, f"{period_label}  {df_str} — {dt_str}")
@@ -211,10 +230,11 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
 
     # --- Summary ---
     ws.cell(r, 1, "СВОДКА ПО РАБОТНИКАМ").font = Font(bold=True, size=11)
-    ws.merge_cells(f"A{r}:H{r}")
+    ws.merge_cells(f"A{r}:J{r}")
     r += 1
     for col, h in enumerate(
-        ["ФИО", "График", "Смен", "Часов всего", "Среднее/день", "Опозданий", "Переработок", "Незакр."], 1
+        ["ФИО", "График", "Смен", "Дневная смена", "Ночная смена", "Общее время",
+         "Среднее/день", "Опозданий", "Переработок", "Незакр."], 1
     ):
         cell = ws.cell(r, col, h)
         cell.font = white_bold
@@ -223,20 +243,28 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
 
     total_shifts = 0
     total_hours = 0.0
+    total_day_hours = 0.0
+    total_night_hours = 0.0
     for st in sorted(stats.values(), key=lambda x: x["name"]):
         closed = st["shifts"] - st["open"]
         avg = round(st["hours"] / closed, 2) if closed > 0 else 0.0
         for col, val in enumerate([
             st["name"], st["schedule"], st["shifts"],
-            round(st["hours"], 2), avg,
+            round(st["day_hours"], 2), round(st["night_hours"], 2), round(st["hours"], 2), avg,
             st["late"] or "", st["overtime"] or "", st["open"] or "",
         ], 1):
             ws.cell(r, col, val)
         total_shifts += st["shifts"]
         total_hours += st["hours"]
+        total_day_hours += st["day_hours"]
+        total_night_hours += st["night_hours"]
         r += 1
 
-    for col, val in enumerate(["ИТОГО", "", total_shifts, round(total_hours, 2), "", "", "", ""], 1):
+    for col, val in enumerate([
+        "ИТОГО", "", total_shifts,
+        round(total_day_hours, 2), round(total_night_hours, 2), round(total_hours, 2),
+        "", "", "", "",
+    ], 1):
         cell = ws.cell(r, col, val)
         cell.font = dark_bold
         cell.fill = fill_total
@@ -271,7 +299,7 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
             ws.cell(r, col, val)
         r += 1
 
-    for i, width in enumerate([18, 24, 14, 10, 10, 10, 14, 10, 10], 1):
+    for i, width in enumerate([18, 24, 14, 14, 14, 12, 12, 10, 10, 10], 1):
         ws.column_dimensions[get_column_letter(i)].width = width
 
     buf = io.BytesIO()
