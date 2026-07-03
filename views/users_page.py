@@ -1,9 +1,24 @@
+import datetime as dt
 import html
 import json
 
 from views.common import topbar
 from db.admin_users import list_admins
 from db.credentials import get_workers_with_access
+from db.login_log import get_login_log
+from utils import now_msk
+
+_ROLE_LABELS = {
+    "admin": "👑 Администратор",
+    "accountant": "📊 Бухгалтер",
+    "worker": "👷 Работник",
+}
+
+
+def _format_duration(start: dt.datetime, end: dt.datetime) -> str:
+    total_min = max(0, int((end - start).total_seconds() // 60))
+    h, m = divmod(total_min, 60)
+    return f"{h}ч {m:02d}мин" if h else f"{m}мин"
 
 _USERS_PAGE = """<!doctype html>
 <html lang="ru"><head>
@@ -34,6 +49,18 @@ _USERS_PAGE = """<!doctype html>
   </tr></thead>
   <tbody id="usersBody">
 {rows}
+  </tbody>
+</table>
+</div>
+
+<h2 style="margin-top:32px;">🕘 История входов</h2>
+<div class="scroll-x">
+<table>
+  <thead><tr>
+    <th>Пользователь</th><th>Роль</th><th>Вход</th><th>Выход</th><th>Длительность</th>
+  </tr></thead>
+  <tbody>
+{login_rows}
   </tbody>
 </table>
 </div>
@@ -272,6 +299,28 @@ def render_users(user: str) -> str:
 
     count_all = counts["admin"] + counts["accountant"] + counts["worker"]
 
+    now = now_msk()
+    login_rows = []
+    for entry in get_login_log(200):
+        login_at = dt.datetime.fromisoformat(entry["login_at"])
+        if entry["logout_at"]:
+            logout_at = dt.datetime.fromisoformat(entry["logout_at"])
+            logout_str = logout_at.strftime("%d.%m.%Y %H:%M")
+            duration = _format_duration(login_at, logout_at)
+        else:
+            logout_str = '<span class="pill ok">В сети</span>'
+            duration = _format_duration(login_at, now) + " (ещё идёт)"
+        role_label = _ROLE_LABELS.get(entry["role"], entry["role"])
+        login_rows.append(
+            f'<tr>'
+            f'<td><strong>{html.escape(entry["username"])}</strong></td>'
+            f'<td>{role_label}</td>'
+            f'<td class="text-sm-muted">{login_at.strftime("%d.%m.%Y %H:%M")}</td>'
+            f'<td class="text-sm-muted">{logout_str}</td>'
+            f'<td class="text-sm-muted">{duration}</td>'
+            f'</tr>'
+        )
+
     return _USERS_PAGE.format(
         topbar=topbar("users", user),
         me_js=json.dumps(user),
@@ -281,4 +330,6 @@ def render_users(user: str) -> str:
         count_admin=counts["admin"],
         count_accountant=counts["accountant"],
         count_worker=counts["worker"],
+        login_rows="\n".join(login_rows) if login_rows else
+            '<tr><td colspan="5" class="empty-cell">Нет данных</td></tr>',
     )

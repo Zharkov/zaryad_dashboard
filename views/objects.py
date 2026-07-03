@@ -20,21 +20,21 @@ _OBJECTS_PAGE = """<!doctype html>
   <button class="btn btn-primary" onclick="openAddObject()">➕ Добавить объект</button>
 </div>
 
-<form method="GET" action="/objects" class="mb-md">
+<form method="GET" action="/objects" class="mb-md" onsubmit="return false;">
   <input class="search" type="text" name="search" placeholder="🔍 Поиск..."
-         value="{search_value}" oninput="this.form.submit()">
+         value="{search_value}" oninput="debouncedSearch(this.value)">
 </form>
 
 <div class="scroll-x">
 <table>
   <thead><tr><th>Название</th><th>Работников</th><th>Описание</th><th>Статус</th><th>Действия</th></tr></thead>
-  <tbody>
+  <tbody id="objectsBody">
 {rows}
   </tbody>
 </table>
 </div>
 
-<div class="footer">Всего: {total}</div>
+<div class="footer">Всего: <span id="objectsTotal">{total}</span></div>
 
 </div>
 
@@ -79,6 +79,29 @@ _OBJECTS_PAGE = """<!doctype html>
 
 <script>
 let editingObjectId = null;
+
+let _searchTimer = null;
+let _searchSeq = 0;
+function debouncedSearch(val) {{
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(function() {{ runSearch(val); }}, 300);
+}}
+async function runSearch(val) {{
+  const seq = ++_searchSeq;
+  const u = new URL(location.href);
+  if (val) u.searchParams.set('search', val);
+  else u.searchParams.delete('search');
+  history.replaceState(null, '', u.toString());
+  try {{
+    const r = await fetch('/api/search_objects?search=' + encodeURIComponent(val));
+    const d = await r.json();
+    if (seq !== _searchSeq) return;
+    if (d.ok) {{
+      document.getElementById('objectsBody').innerHTML = d.rows;
+      document.getElementById('objectsTotal').textContent = d.total;
+    }}
+  }} catch (e) {{}}
+}}
 
 function showToast(msg, isError) {{
   const t = document.getElementById("toast");
@@ -162,7 +185,7 @@ async function restoreObject(id, name) {{
 """
 
 
-def render_objects(search: str, user: str) -> str:
+def render_object_rows_html(search: str) -> tuple[str, int]:
     all_objects = get_objects(include_deleted=True)
     search_low = search.lower().strip()
     if search_low:
@@ -205,11 +228,18 @@ def render_objects(search: str, user: str) -> str:
             f'<td>{status}</td><td>{actions}</td></tr>'
         )
 
+    rows_html = "\n".join(rows) if rows else (
+        '<tr><td colspan="5" class="empty-cell">'
+        'Нет объектов. Нажми «➕ Добавить объект»</td></tr>'
+    )
+    return rows_html, len(all_objects)
+
+
+def render_objects(search: str, user: str) -> str:
+    rows_html, total = render_object_rows_html(search)
     return _OBJECTS_PAGE.format(
         topbar=topbar("objects", user),
         search_value=html.escape(search),
-        rows="\n".join(rows) if rows else
-            '<tr><td colspan="5" class="empty-cell">'
-            'Нет объектов. Нажми «➕ Добавить объект»</td></tr>',
-        total=len(all_objects),
+        rows=rows_html,
+        total=total,
     )

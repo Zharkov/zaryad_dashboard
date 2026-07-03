@@ -128,6 +128,13 @@ class GetRoutesMixin:
             self._send(200, render_workers(search, user))
             return
 
+        if path == "/api/search_workers":
+            search = self._qs_get("search", "")
+            from views.workers import render_worker_rows_html
+            rows_html, total = render_worker_rows_html(search)
+            self._send_json({"ok": True, "rows": rows_html, "total": total})
+            return
+
         if path == "/worker":
             wid = self._qs_get("id", "")
             if not wid.isdigit():
@@ -143,6 +150,13 @@ class GetRoutesMixin:
         if path == "/objects":
             search = self._qs_get("search", "")
             self._send(200, render_objects(search, user))
+            return
+
+        if path == "/api/search_objects":
+            search = self._qs_get("search", "")
+            from views.objects import render_object_rows_html
+            rows_html, total = render_object_rows_html(search)
+            self._send_json({"ok": True, "rows": rows_html, "total": total})
             return
 
         if path == "/object":

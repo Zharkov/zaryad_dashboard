@@ -94,6 +94,15 @@ def db_migrate():
             deleted_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_object_comments_object ON object_comments(object_id);
+        CREATE TABLE IF NOT EXISTS login_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            role TEXT NOT NULL,
+            worker_id INTEGER,
+            login_at TEXT NOT NULL,
+            logout_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_login_log_login_at ON login_log(login_at);
         """)
     # Incremental column migrations
     try:

@@ -20,21 +20,21 @@ _WORKERS_PAGE = """<!doctype html>
   <button class="btn btn-primary" onclick="openAddWorker()">➕ Добавить работника</button>
 </div>
 
-<form method="GET" action="/workers" class="mb-md">
+<form method="GET" action="/workers" class="mb-md" onsubmit="return false;">
   <input class="search" type="text" name="search" placeholder="🔍 Поиск..."
-         value="{search_value}" oninput="this.form.submit()">
+         value="{search_value}" oninput="debouncedSearch(this.value)">
 </form>
 
 <div class="scroll-x">
 <table>
   <thead><tr><th>Имя</th><th>График</th><th>Статус</th><th>Доступ к сайту</th><th>Действия</th></tr></thead>
-  <tbody>
+  <tbody id="workersBody">
 {rows}
   </tbody>
 </table>
 </div>
 
-<div class="footer">Всего: {total}</div>
+<div class="footer">Всего: <span id="workersTotal">{total}</span></div>
 
 </div>
 
@@ -97,6 +97,29 @@ _WORKERS_PAGE = """<!doctype html>
 
 <script>
 let editingWorkerId = null;
+
+let _searchTimer = null;
+let _searchSeq = 0;
+function debouncedSearch(val) {{
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(function() {{ runSearch(val); }}, 300);
+}}
+async function runSearch(val) {{
+  const seq = ++_searchSeq;
+  const u = new URL(location.href);
+  if (val) u.searchParams.set('search', val);
+  else u.searchParams.delete('search');
+  history.replaceState(null, '', u.toString());
+  try {{
+    const r = await fetch('/api/search_workers?search=' + encodeURIComponent(val));
+    const d = await r.json();
+    if (seq !== _searchSeq) return;
+    if (d.ok) {{
+      document.getElementById('workersBody').innerHTML = d.rows;
+      document.getElementById('workersTotal').textContent = d.total;
+    }}
+  }} catch (e) {{}}
+}}
 
 function showToast(msg, isError) {{
   const t = document.getElementById("toast");
@@ -258,7 +281,7 @@ async function unblockAccess(id, name) {{
 """
 
 
-def render_workers(search: str, user: str) -> str:
+def render_worker_rows_html(search: str) -> tuple[str, int]:
     all_workers = get_workers(include_deleted=True)
     search_low = search.lower().strip()
     if search_low:
@@ -344,10 +367,16 @@ def render_workers(search: str, user: str) -> str:
             f'<td>{actions}</td></tr>'
         )
 
+    rows_html = "\n".join(rows) if rows else \
+        '<tr><td colspan="5" class="empty-cell">Нет</td></tr>'
+    return rows_html, len(all_workers)
+
+
+def render_workers(search: str, user: str) -> str:
+    rows_html, total = render_worker_rows_html(search)
     return _WORKERS_PAGE.format(
         topbar=topbar("workers", user),
         search_value=html.escape(search),
-        rows="\n".join(rows) if rows else
-            '<tr><td colspan="5" class="empty-cell">Нет</td></tr>',
-        total=len(all_workers),
+        rows=rows_html,
+        total=total,
     )

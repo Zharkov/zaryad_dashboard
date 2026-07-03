@@ -6,6 +6,7 @@ from http.server import ThreadingHTTPServer
 from config import HOST, PORT
 from db.conn import db_migrate
 from db.admin_users import get_admin_count
+from db.backup import backup_loop
 from sessions import cleanup_sessions_loop
 from handler import Handler
 
@@ -23,6 +24,7 @@ def main():
 
     t = threading.Thread(target=cleanup_sessions_loop, daemon=True)
     t.start()
+    threading.Thread(target=backup_loop, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     display_host = "localhost" if HOST in ("0.0.0.0", "") else HOST
     print(f"ЗАРЯД запущен · http://{display_host}:{PORT}")
