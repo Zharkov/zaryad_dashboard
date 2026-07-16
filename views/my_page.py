@@ -4,9 +4,9 @@ import json
 
 from views.common import render_heatmap, build_heatmap_info_json
 from db.workers import get_worker_by_id
-from db.shifts import get_all_shifts_for_worker
+from db.shifts import get_all_shifts_for_worker, get_shifts
 from db.attachments import get_objects_of_worker
-from utils import shift_hours, lateness, now_msk, hhmm_to_time
+from utils import shift_hours, lateness, now_msk, hhmm_to_time, parse_period, PERIOD_LABELS
 
 _MY_PAGE = """<!doctype html>
 <html lang="ru"><head>
@@ -47,9 +47,27 @@ _MY_PAGE = """<!doctype html>
   График: {schedule}
 </p>
 
+<div class="periods">{period_links}
+  <a href="#" onclick="event.preventDefault(); toggleCal()" class="{custom_active}">📅 Свой период</a>
+</div>
+
+<div id="calBlock" class="cal-block" style="{cal_display_style}">
+  <form method="GET" action="" class="flex-row">
+    <input type="hidden" name="period" value="custom">
+    <label class="text-sm-muted">С:</label>
+    <input type="date" name="from" value="{cal_from}" required class="input-full">
+    <label class="text-sm-muted">По:</label>
+    <input type="date" name="to" value="{cal_to}" required class="input-full">
+    <button type="submit" class="btn btn-primary btn-sm">Показать</button>
+  </form>
+</div>
+
+<p class="subtitle">
+  Период: {date_from} — {date_to}
+</p>
+
 <div class="cards">
-  <div class="card"><div class="v">{total_hours}</div><div class="l">Часов всего</div></div>
-  <div class="card"><div class="v">{this_month_h}</div><div class="l">В этом месяце</div></div>
+  <div class="card"><div class="v">{period_hours}</div><div class="l">Часов за период</div></div>
   <div class="card"><div class="v">{avg_per_day}</div><div class="l">Среднее в день</div></div>
   <div class="card"><div class="v">{late_count}</div><div class="l">Опозданий</div></div>
   <div class="card"><div class="v">{overtime_count}</div><div class="l">Переработок</div></div>
@@ -68,7 +86,7 @@ _MY_PAGE = """<!doctype html>
 <h2>По месяцам</h2>
 <div class="chart-box"><canvas id="byMonth"></canvas></div>
 
-<h2>Мои смены</h2>
+<h2>Мои смены · {period_label}</h2>
 <div class="scroll-x">
 <table>
   <thead><tr><th>Дата</th><th>Смена</th><th>Приход</th><th>Уход</th><th>Часы</th><th>Пометка</th></tr></thead>
@@ -76,11 +94,15 @@ _MY_PAGE = """<!doctype html>
 </table>
 </div>
 
-<div class="footer">{name} · {total_shifts} смен</div>
+<div class="footer">{name} · {total_shifts} смен за период</div>
 </div>
 
 <script src="/static/chart.min.js"></script>
 <script>
+function toggleCal() {{
+  const b = document.getElementById("calBlock");
+  b.style.display = (b.style.display === "none" || !b.style.display) ? "block" : "none";
+}}
 const HEATMAP_INFO = {heatmap_info_json};
 function showDayInfo(dateStr, cellEl) {{
   document.querySelectorAll(".heatmap .cell.selected").forEach(c => c.classList.remove("selected"));
@@ -131,33 +153,39 @@ new Chart(document.getElementById("byMonth"), {{
 """
 
 
-def render_my_page(worker_id: int, user: str) -> str | None:
+def render_my_page(worker_id: int, user: str, period: str = "today",
+                   custom_from: str = "", custom_to: str = "") -> str | None:
     worker = get_worker_by_id(worker_id)
     if not worker:
         return None
 
-    all_shifts = get_all_shifts_for_worker(worker_id)
-
-    total_hours = 0.0
     today = now_msk().date()
-    this_month_start = today.replace(day=1)
-    this_month_hours = 0.0
-    days_with_work = 0
-    late_count = 0
-    overtime_count = 0
-    by_month = {}
+    date_from, date_to = parse_period(period, custom_from, custom_to)
 
+    all_shifts = get_all_shifts_for_worker(worker_id)
+    period_shifts = get_shifts(date_from, date_to, worker_id)
+
+    by_month = {}
     for s in all_shifts:
         h = shift_hours(s)
         if h is None:
             continue
-        total_hours += h
-        days_with_work += 1
         d = dt.date.fromisoformat(s["date"])
-        if d >= this_month_start:
-            this_month_hours += h
         month_key = d.strftime("%Y-%m")
         by_month[month_key] = by_month.get(month_key, 0) + h
+
+    period_hours = 0.0
+    days_with_work = 0
+    late_count = 0
+    overtime_count = 0
+
+    for s in period_shifts:
+        h = shift_hours(s)
+        if h is None:
+            continue
+        period_hours += h
+        days_with_work += 1
+        d = dt.date.fromisoformat(s["date"])
         late_cls, _ = lateness(s)
         if late_cls in ("late", "very-late"):
             late_count += 1
@@ -168,12 +196,12 @@ def render_my_page(worker_id: int, user: str) -> str | None:
             if (left - sched_dt).total_seconds() > 30 * 60:
                 overtime_count += 1
 
-    avg_per_day = round(total_hours / days_with_work, 2) if days_with_work else 0
+    avg_per_day = round(period_hours / days_with_work, 2) if days_with_work else 0
     heatmap_cells = render_heatmap(all_shifts, today)
     heatmap_info_json = build_heatmap_info_json(all_shifts, worker)
 
     rows = []
-    for s in all_shifts[:50]:
+    for s in period_shifts:
         arr = dt.datetime.fromisoformat(s["arrived_at"])
         h = shift_hours(s)
         left_str = "—"
@@ -216,12 +244,33 @@ def render_my_page(worker_id: int, user: str) -> str | None:
     else:
         objects_block = ""
 
+    period_links = "".join(
+        f'<a href="?period={p}" class="{"active" if period == p else ""}">{label}</a>'
+        for p, label in [
+            ("today", "Сегодня"), ("week", "Неделя"),
+            ("first_half", "1-15"), ("second_half", "16-конец"),
+            ("this_month", "Этот месяц"), ("prev_month", "Прошлый месяц"),
+            ("year", "Год"),
+        ]
+    )
+    custom_active = "active" if period == "custom" else ""
+    cal_from = custom_from if custom_from else date_from.isoformat()
+    cal_to = custom_to if custom_to else date_to.isoformat()
+    cal_display_style = "" if period == "custom" else "display:none;"
+
     return _MY_PAGE.format(
         name=html.escape(worker["name"]),
         name_html=html.escape(worker["name"]),
         schedule=f"{worker['default_start']}-{worker['default_end']}",
-        total_hours=f"{total_hours:.1f}",
-        this_month_h=f"{this_month_hours:.1f}",
+        period_links=period_links,
+        custom_active=custom_active,
+        cal_from=html.escape(cal_from),
+        cal_to=html.escape(cal_to),
+        cal_display_style=cal_display_style,
+        date_from=date_from.strftime("%d.%m.%Y"),
+        date_to=date_to.strftime("%d.%m.%Y"),
+        period_label=html.escape(PERIOD_LABELS.get(period, period)),
+        period_hours=f"{period_hours:.1f}",
         avg_per_day=f"{avg_per_day:.1f}",
         late_count=late_count,
         overtime_count=overtime_count,
@@ -229,8 +278,8 @@ def render_my_page(worker_id: int, user: str) -> str | None:
         heatmap="\n".join(heatmap_cells),
         heatmap_info_json=heatmap_info_json,
         rows="\n".join(rows) if rows else
-            '<tr><td colspan="6" class="empty-cell">Нет смен</td></tr>',
+            '<tr><td colspan="6" class="empty-cell">Нет смен за период</td></tr>',
         by_month_labels=json.dumps(bm_labels),
         by_month_data=json.dumps(bm_data),
-        total_shifts=len(all_shifts),
+        total_shifts=len(period_shifts),
     )

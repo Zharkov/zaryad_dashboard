@@ -81,7 +81,10 @@ class GetRoutesMixin:
                 if not worker_id:
                     self._send(403, "<h1>403 — нет работника</h1>")
                     return
-                body = render_my_page(worker_id, user)
+                period = safe_period(self._qs_get("period", "today"))
+                custom_from = safe_date_str(self._qs_get("from", ""))
+                custom_to = safe_date_str(self._qs_get("to", ""))
+                body = render_my_page(worker_id, user, period, custom_from, custom_to)
                 self._send(200, body or "<h1>404</h1>")
             else:
                 period = safe_period(self._qs_get("period", "week"))
@@ -96,7 +99,10 @@ class GetRoutesMixin:
                 self._redirect("/")
                 return
             worker_id = session_data.get("worker_id")
-            body = render_my_page(worker_id, user) if worker_id else None
+            period = safe_period(self._qs_get("period", "today"))
+            custom_from = safe_date_str(self._qs_get("from", ""))
+            custom_to = safe_date_str(self._qs_get("to", ""))
+            body = render_my_page(worker_id, user, period, custom_from, custom_to) if worker_id else None
             self._send(200, body or "<h1>404</h1>")
             return
 
