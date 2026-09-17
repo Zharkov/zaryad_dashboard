@@ -3,6 +3,8 @@ import io
 import datetime as dt
 
 from db.shifts import get_shifts
+from db.fines import get_ledger, safe_kind
+from db.comments import get_fine_comments_bulk
 from utils import parse_period, shift_hours, lateness, hhmm_to_time, PERIOD_LABELS
 
 
@@ -18,22 +20,31 @@ def _csv_safe(value: str) -> str:
     return value
 
 
-def _build_stats(shifts: list) -> dict[int, dict]:
+def _blank_stat(name: str, schedule: str) -> dict:
+    return {
+        "name": _csv_safe(name),
+        "schedule": schedule,
+        "shifts": 0,
+        "hours": 0.0,
+        "day_hours": 0.0,
+        "night_hours": 0.0,
+        "late": 0,
+        "overtime": 0,
+        "open": 0,
+        "fines": 0.0,
+        "bonuses": 0.0,
+    }
+
+
+def _build_stats(shifts: list, ledger: list | None = None) -> dict[int, dict]:
     stats: dict[int, dict] = {}
     for s in shifts:
         wid = s["worker_id"]
         if wid not in stats:
-            stats[wid] = {
-                "name": _csv_safe(s["worker_name"]),
-                "schedule": f"{s['default_start'] or '?'}–{s['default_end'] or '?'}",
-                "shifts": 0,
-                "hours": 0.0,
-                "day_hours": 0.0,
-                "night_hours": 0.0,
-                "late": 0,
-                "overtime": 0,
-                "open": 0,
-            }
+            stats[wid] = _blank_stat(
+                s["worker_name"],
+                f"{s['default_start'] or '?'}–{s['default_end'] or '?'}",
+            )
         st = stats[wid]
         st["shifts"] += 1
         h = shift_hours(s)
@@ -56,7 +67,35 @@ def _build_stats(shifts: list) -> dict[int, dict]:
             sched_dt = dt.datetime.combine(d, hhmm_to_time(s["default_end"]))
             if (left - sched_dt).total_seconds() > 30 * 60:
                 st["overtime"] += 1
+
+    # Штрафы и премии — в том числе для тех, у кого за период не было смен
+    for row in (ledger or []):
+        wid = row["worker_id"]
+        if wid not in stats:
+            stats[wid] = _blank_stat(row["worker_name"], "—")
+        key = "bonuses" if safe_kind(row["kind"]) == "bonus" else "fines"
+        stats[wid][key] += row["amount"]
     return stats
+
+
+def _ledger_comments(row, comments_map: dict) -> str:
+    """Комментарии к штрафу/премии одной строкой."""
+    return " | ".join(
+        f'{c["author"]} ({dt.datetime.fromisoformat(c["created_at"]).strftime("%d.%m.%Y %H:%M")}): '
+        f'{c["text"]}'
+        for c in comments_map.get(row["id"], [])
+    )
+
+
+def _load_ledger(date_from: dt.date, date_to: dt.date, search: str = "") -> tuple[list, dict]:
+    rows = get_ledger(date_from, date_to, None, search)
+    return rows, get_fine_comments_bulk([r["id"] for r in rows])
+
+
+_LEDGER_HEADERS = [
+    "Дата", "Работник", "Тип", "Название", "Сумма, ₽",
+    "Кто выдал", "Когда выдал", "Описание", "Комментарии",
+]
 
 
 def render_csv(period: str, custom_from: str = "", custom_to: str = "",
@@ -68,7 +107,8 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
         shifts = [s for s in shifts if search_low in s["worker_name"].lower()]
 
     # ── Сводка по работникам ─────────────────────────────────────────────────
-    stats = _build_stats(shifts)
+    ledger, ledger_comments = _load_ledger(date_from, date_to, search)
+    stats = _build_stats(shifts, ledger)
 
     # ── Формируем CSV ────────────────────────────────────────────────────────
     buf = io.StringIO()
@@ -90,12 +130,15 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
     wr.writerow([
         "ФИО", "График", "Смен", "Дневная смена", "Ночная смена", "Общее время",
         "Среднее в день", "Опозданий", "Переработок", "Незакр. смен",
+        "Штрафы, ₽", "Премии, ₽",
     ])
 
     total_shifts = 0
     total_hours = 0.0
     total_day_hours = 0.0
     total_night_hours = 0.0
+    total_fines = 0.0
+    total_bonuses = 0.0
 
     for st in sorted(stats.values(), key=lambda x: x["name"]):
         closed = st["shifts"] - st["open"]
@@ -111,11 +154,15 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
             st["late"] or "",
             st["overtime"] or "",
             st["open"] or "",
+            _dec(st["fines"]) if st["fines"] else "",
+            _dec(st["bonuses"]) if st["bonuses"] else "",
         ])
         total_shifts += st["shifts"]
         total_hours += st["hours"]
         total_day_hours += st["day_hours"]
         total_night_hours += st["night_hours"]
+        total_fines += st["fines"]
+        total_bonuses += st["bonuses"]
 
     # Итоговая строка
     wr.writerow([
@@ -125,6 +172,8 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
         _dec(total_night_hours),
         _dec(total_hours),
         "", "", "", "",
+        _dec(total_fines),
+        _dec(total_bonuses),
     ])
     wr.writerow([])
 
@@ -161,6 +210,31 @@ def render_csv(period: str, custom_from: str = "", custom_to: str = "",
             "Ночная" if s["shift_type"] == "night" else "Дневная",
         ])
 
+    # ── Раздел 3: штрафы и премии ────────────────────────────────────────────
+    wr.writerow([])
+    wr.writerow(["ШТРАФЫ И ПРЕМИИ"])
+    wr.writerow(_LEDGER_HEADERS)
+
+    if ledger:
+        for row in ledger:
+            is_bonus = safe_kind(row["kind"]) == "bonus"
+            issued = dt.datetime.fromisoformat(row["created_at"])
+            wr.writerow([
+                dt.date.fromisoformat(row["date"]).strftime("%d.%m.%Y"),
+                _csv_safe(row["worker_name"]),
+                "Премия" if is_bonus else "Штраф",
+                _csv_safe(row["title"]),
+                _dec(row["amount"]),
+                _csv_safe(row["created_by"]),
+                issued.strftime("%d.%m.%Y %H:%M"),
+                _csv_safe(row["description"] or ""),
+                _csv_safe(_ledger_comments(row, ledger_comments)),
+            ])
+        wr.writerow(["ИТОГО", "", "Штрафы", "", _dec(total_fines), "", "", "", ""])
+        wr.writerow(["", "", "Премии", "", _dec(total_bonuses), "", "", "", ""])
+    else:
+        wr.writerow(["За период штрафов и премий не выдавали"])
+
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
@@ -182,7 +256,8 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
         shifts = [s for s in shifts if search_low in s["worker_name"].lower()]
 
     # Build stats (same logic as render_csv)
-    stats = _build_stats(shifts)
+    ledger, ledger_comments = _load_ledger(date_from, date_to, search)
+    stats = _build_stats(shifts, ledger)
 
     wb = Workbook()
     ws = wb.active
@@ -213,11 +288,12 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
 
     # --- Summary ---
     ws.cell(r, 1, "СВОДКА ПО РАБОТНИКАМ").font = Font(bold=True, size=11)
-    ws.merge_cells(f"A{r}:J{r}")
+    ws.merge_cells(f"A{r}:L{r}")
     r += 1
     for col, h in enumerate(
         ["ФИО", "График", "Смен", "Дневная смена", "Ночная смена", "Общее время",
-         "Среднее/день", "Опозданий", "Переработок", "Незакр."], 1
+         "Среднее/день", "Опозданий", "Переработок", "Незакр.",
+         "Штрафы, ₽", "Премии, ₽"], 1
     ):
         cell = ws.cell(r, col, h)
         cell.font = white_bold
@@ -228,6 +304,8 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
     total_hours = 0.0
     total_day_hours = 0.0
     total_night_hours = 0.0
+    total_fines = 0.0
+    total_bonuses = 0.0
     for st in sorted(stats.values(), key=lambda x: x["name"]):
         closed = st["shifts"] - st["open"]
         avg = round(st["hours"] / closed, 2) if closed > 0 else 0.0
@@ -235,18 +313,22 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
             st["name"], st["schedule"], st["shifts"],
             round(st["day_hours"], 2), round(st["night_hours"], 2), round(st["hours"], 2), avg,
             st["late"] or "", st["overtime"] or "", st["open"] or "",
+            round(st["fines"], 2) or "", round(st["bonuses"], 2) or "",
         ], 1):
             ws.cell(r, col, val)
         total_shifts += st["shifts"]
         total_hours += st["hours"]
         total_day_hours += st["day_hours"]
         total_night_hours += st["night_hours"]
+        total_fines += st["fines"]
+        total_bonuses += st["bonuses"]
         r += 1
 
     for col, val in enumerate([
         "ИТОГО", "", total_shifts,
         round(total_day_hours, 2), round(total_night_hours, 2), round(total_hours, 2),
         "", "", "", "",
+        round(total_fines, 2), round(total_bonuses, 2),
     ], 1):
         cell = ws.cell(r, col, val)
         cell.font = dark_bold
@@ -282,8 +364,62 @@ def render_xlsx(period: str, custom_from: str = "", custom_to: str = "",
             ws.cell(r, col, val)
         r += 1
 
-    for i, width in enumerate([18, 24, 14, 14, 14, 12, 12, 10, 10, 10], 1):
+    for i, width in enumerate([18, 24, 14, 14, 14, 12, 12, 10, 10, 10, 12, 12], 1):
         ws.column_dimensions[get_column_letter(i)].width = width
+
+    # --- Штрафы и премии (отдельный лист) ---
+    ws2 = wb.create_sheet("Штрафы и премии")
+    r2 = 1
+    ws2.cell(r2, 1, "ШТРАФЫ И ПРЕМИИ").font = Font(bold=True, size=13)
+    ws2.merge_cells(f"A{r2}:I{r2}")
+    r2 += 1
+    ws2.cell(r2, 1, "Период:").font = bold
+    ws2.cell(r2, 2, f"{period_label}  {df_str} — {dt_str}")
+    r2 += 2
+
+    for col, h in enumerate(_LEDGER_HEADERS, 1):
+        cell = ws2.cell(r2, col, h)
+        cell.font = white_bold
+        cell.fill = fill_header
+    r2 += 1
+
+    for row in ledger:
+        is_bonus = safe_kind(row["kind"]) == "bonus"
+        issued = dt.datetime.fromisoformat(row["created_at"])
+        for col, val in enumerate([
+            dt.date.fromisoformat(row["date"]).strftime("%d.%m.%Y"),
+            _csv_safe(row["worker_name"]),
+            "Премия" if is_bonus else "Штраф",
+            _csv_safe(row["title"]),
+            round(row["amount"], 2),
+            _csv_safe(row["created_by"]),
+            issued.strftime("%d.%m.%Y %H:%M"),
+            _csv_safe(row["description"] or ""),
+            _csv_safe(_ledger_comments(row, ledger_comments)),
+        ], 1):
+            ws2.cell(r2, col, val)
+        r2 += 1
+
+    if not ledger:
+        ws2.cell(r2, 1, "За период штрафов и премий не выдавали")
+        r2 += 1
+
+    for col, val in enumerate(
+        ["ИТОГО штрафов", "", "", "", round(total_fines, 2), "", "", "", ""], 1
+    ):
+        cell = ws2.cell(r2, col, val)
+        cell.font = dark_bold
+        cell.fill = fill_total
+    r2 += 1
+    for col, val in enumerate(
+        ["ИТОГО премий", "", "", "", round(total_bonuses, 2), "", "", "", ""], 1
+    ):
+        cell = ws2.cell(r2, col, val)
+        cell.font = dark_bold
+        cell.fill = fill_total
+
+    for i, width in enumerate([14, 24, 12, 28, 14, 18, 18, 36, 48], 1):
+        ws2.column_dimensions[get_column_letter(i)].width = width
 
     buf = io.BytesIO()
     wb.save(buf)

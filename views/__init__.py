@@ -7,6 +7,9 @@ from views.objects import render_objects
 from views.object_detail import render_object_detail
 from views.export import render_csv, render_xlsx
 from views.users_page import render_users
+from views.crews import render_crews
+from views.crew_detail import render_crew_detail
+from views.ledger import render_ledger
 
 __all__ = [
     "render_login",
@@ -19,4 +22,7 @@ __all__ = [
     "render_csv",
     "render_xlsx",
     "render_users",
+    "render_crews",
+    "render_crew_detail",
+    "render_ledger",
 ]

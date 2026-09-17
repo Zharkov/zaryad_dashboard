@@ -2,6 +2,7 @@ import datetime as dt
 import html as _html
 import json
 
+from db.fines import safe_kind
 from utils import shift_hours, lateness, hhmm_to_time
 
 LOGO_SVG = """<svg width="56" height="26" viewBox="0 0 80 36" xmlns="http://www.w3.org/2000/svg">
@@ -17,13 +18,20 @@ LOGO_SVG = """<svg width="56" height="26" viewBox="0 0 80 36" xmlns="http://www.
 def topbar(active: str, user: str, role: str = "admin") -> str:
     def cls(name):
         return "active" if active == name else ""
-    if role == "accountant":
+    if role == "manager":
         nav = f'<a href="/" class="{cls("dashboard")}">Дашборд</a>'
+    elif role == "accountant":
+        nav = (
+            f'<a href="/" class="{cls("dashboard")}">Дашборд</a>'
+            f'<a href="/ledger" class="{cls("ledger")}">Штрафы и премии</a>'
+        )
     else:
         nav = (
             f'<a href="/" class="{cls("dashboard")}">Дашборд</a>'
             f'<a href="/workers" class="{cls("workers")}">Работники</a>'
             f'<a href="/objects" class="{cls("objects")}">Объекты</a>'
+            f'<a href="/crews" class="{cls("crews")}">Бригады</a>'
+            f'<a href="/ledger" class="{cls("ledger")}">Штрафы и премии</a>'
             f'<a href="/users" class="{cls("users")}">Пользователи</a>'
         )
     return f"""
@@ -69,13 +77,21 @@ def topbar(active: str, user: str, role: str = "admin") -> str:
 """
 
 
-def render_heatmap(all_shifts, today: dt.date) -> list[str]:
+def money(amount: float) -> str:
+    """1000 → «1 000»"""
+    return f'{amount:,.0f}'.replace(",", " ")
+
+
+def render_heatmap(all_shifts, today: dt.date, fines=None) -> list[str]:
     shift_by_date: dict[dt.date, float] = {}
     for s in all_shifts:
         if not s["left_at"]:
             continue
         d = dt.date.fromisoformat(s["date"])
         shift_by_date[d] = shift_by_date.get(d, 0) + (shift_hours(s) or 0)
+
+    fine_dates = {f["date"] for f in (fines or []) if safe_kind(f["kind"]) == "fine"}
+    bonus_dates = {f["date"] for f in (fines or []) if safe_kind(f["kind"]) == "bonus"}
 
     cells = []
     start = today - dt.timedelta(days=27)
@@ -84,6 +100,8 @@ def render_heatmap(all_shifts, today: dt.date) -> list[str]:
     while d <= today:
         is_weekend = d.weekday() >= 5
         h = shift_by_date.get(d)
+        has_fine = d.isoformat() in fine_dates
+        has_bonus = d.isoformat() in bonus_dates
         cls = "cell"
         if is_weekend and h is None:
             cls += " weekend"
@@ -100,6 +118,10 @@ def render_heatmap(all_shifts, today: dt.date) -> list[str]:
             else:
                 cls += " l1"
             hour_str = f'{h:.1f}ч'
+        if has_fine:
+            cls += " has-fine"
+        if has_bonus:
+            cls += " has-bonus"
         title = d.strftime("%d.%m.%Y")
         if h is not None:
             title += f" · {h}ч"
@@ -107,6 +129,10 @@ def render_heatmap(all_shifts, today: dt.date) -> list[str]:
             title += " · выходной"
         else:
             title += " · нет данных"
+        if has_fine:
+            title += " · есть штраф"
+        if has_bonus:
+            title += " · есть премия"
         cells.append(
             f'<div class="{cls}" title="{title}" '
             f'onclick="showDayInfo(\'{d.isoformat()}\', this)">'
@@ -118,7 +144,7 @@ def render_heatmap(all_shifts, today: dt.date) -> list[str]:
     return cells
 
 
-def build_heatmap_info_json(all_shifts, worker) -> str:
+def build_heatmap_info_json(all_shifts, worker, fines=None) -> str:
     info: dict[str, list[dict]] = {}
     for s in all_shifts:
         arr = dt.datetime.fromisoformat(s["arrived_at"])
@@ -133,6 +159,7 @@ def build_heatmap_info_json(all_shifts, worker) -> str:
             if diff_min > 30:
                 overtime_lbl = f"+{diff_min}мин"
         info.setdefault(s["date"], []).append({
+            "kind": "shift",
             "shift_type": s["shift_type"] or "day",
             "arrived": arr.strftime("%H:%M"),
             "left": dt.datetime.fromisoformat(s["left_at"]).strftime("%H:%M") if s["left_at"] else None,
@@ -141,4 +168,68 @@ def build_heatmap_info_json(all_shifts, worker) -> str:
             "late": late_lbl if late_cls in ("late", "very-late") else "",
             "overtime": overtime_lbl,
         })
+    for f in (fines or []):
+        info.setdefault(f["date"], []).append({
+            "kind": safe_kind(f["kind"]),
+            "title": f["title"],
+            "description": f["description"] or "",
+            "amount": f["amount"],
+        })
     return json.dumps(info, ensure_ascii=False)
+
+
+def render_fine_cards(fines, comments_map: dict, can_delete: bool,
+                      empty_text: str = "Штрафов нет") -> str:
+    if not fines:
+        return f'<p class="text-sm-muted">{empty_text}</p>'
+    cards = []
+    for f in fines:
+        kind = safe_kind(f["kind"])
+        is_bonus = kind == "bonus"
+        created = dt.date.fromisoformat(f["date"])
+        amount_str = ("+" if is_bonus else "−") + money(f["amount"])
+        icon = "🎁" if is_bonus else "💰"
+        card_cls = "bonus-card" if is_bonus else "fine-card"
+        amount_cls = "bonus-amount" if is_bonus else "fine-amount"
+        issued_by = "Начислил" if is_bonus else "Выдал"
+        delete_btn = (
+            f'<button class="btn btn-sm btn-danger" '
+            f'onclick="deleteFine({f["id"]}, \'{kind}\')">× Удалить</button>'
+            if can_delete else ''
+        )
+        desc_html = (
+            f'<div class="comment-body">{_html.escape(f["description"])}</div>'
+            if f["description"] else ''
+        )
+        comments = comments_map.get(f["id"], [])
+        comment_cards = "".join(
+            f'<div class="comment-card" style="margin:6px 0 0;">'
+            f'<div class="comment-meta">'
+            f'<span class="comment-author">👤 {_html.escape(c["author"])}</span>'
+            f'<span class="comment-date">'
+            f'{dt.datetime.fromisoformat(c["created_at"]).strftime("%d.%m.%Y %H:%M")}</span>'
+            f'</div>'
+            f'<div class="comment-body">{_html.escape(c["text"])}</div>'
+            f'</div>'
+            for c in comments
+        )
+        issued_at = dt.datetime.fromisoformat(f["created_at"]).strftime("%d.%m.%Y %H:%M")
+        cards.append(
+            f'<div class="comment-card {card_cls}">'
+            f'<div class="comment-meta">'
+            f'<span class="comment-author">{icon} {_html.escape(f["title"])}</span>'
+            f'<span class="comment-date">{created.strftime("%d.%m.%Y")}</span>'
+            f'<span class="pill {amount_cls}">{amount_str} ₽</span>'
+            f'{delete_btn}'
+            f'</div>'
+            f'{desc_html}'
+            f'<div class="text-sm-muted mt-sm">'
+            f'{issued_by}: {_html.escape(f["created_by"])} · {issued_at}</div>'
+            f'<div class="fine-comments-list mt-sm">{comment_cards}</div>'
+            f'<textarea class="textarea-full mt-sm" rows="2" id="fineCommentInput{f["id"]}" '
+            f'placeholder="Оставить комментарий..."></textarea>'
+            f'<button class="btn btn-sm btn-primary mt-sm" '
+            f'onclick="submitFineComment({f["id"]})">💬 Добавить</button>'
+            f'</div>'
+        )
+    return "\n".join(cards)

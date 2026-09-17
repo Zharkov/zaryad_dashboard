@@ -11,6 +11,7 @@ from db.workers import get_workers
 _ROLE_LABELS = {
     "admin": "👑 Администратор",
     "accountant": "📊 Бухгалтер",
+    "manager": "🕘 Менеджер смен",
     "worker": "👷 Работник",
 }
 
@@ -19,7 +20,7 @@ _USERS_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · Пользователи</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/static/style.css?v=11">
+<link rel="stylesheet" href="/static/style.css?v=12">
 </head><body>
 {topbar}
 <div class="container">
@@ -33,6 +34,7 @@ _USERS_PAGE = """<!doctype html>
   <button class="tab-btn active" onclick="filterRole('all', this)">Все ({count_all})</button>
   <button class="tab-btn" onclick="filterRole('admin', this)">👑 Администраторы ({count_admin})</button>
   <button class="tab-btn" onclick="filterRole('accountant', this)">📊 Бухгалтеры ({count_accountant})</button>
+  <button class="tab-btn" onclick="filterRole('manager', this)">🕘 Менеджеры смен ({count_manager})</button>
   <button class="tab-btn" onclick="filterRole('worker', this)">👷 Работники ({count_worker})</button>
 </div>
 
@@ -76,6 +78,7 @@ _USERS_PAGE = """<!doctype html>
       <select id="addRole" class="input-full">
         <option value="admin">👑 Администратор</option>
         <option value="accountant">📊 Бухгалтер</option>
+        <option value="manager">🕘 Менеджер смен</option>
       </select>
     </div>
     <div class="footer-btns">
@@ -168,9 +171,13 @@ async function submitPasswd() {{
   }} catch(e) {{ showToast('Сеть: ' + e.message, true); }}
 }}
 
-async function changeRole(username, newRole) {{
-  const label = newRole === 'admin' ? 'Администратор' : 'Бухгалтер';
-  if (!confirm('Изменить роль «' + username + '» на «' + label + '»?')) return;
+const ROLE_LABELS = {{admin: 'Администратор', accountant: 'Бухгалтер', manager: 'Менеджер смен'}};
+async function changeRole(username, newRole, selectEl) {{
+  const label = ROLE_LABELS[newRole] || newRole;
+  if (!confirm('Изменить роль «' + username + '» на «' + label + '»?')) {{
+    if (selectEl) selectEl.value = selectEl.dataset.current;
+    return;
+  }}
   try {{
     const r = await fetch('/api/change_user_role', {{
       method: 'POST', headers: {{'Content-Type': 'application/json'}},
@@ -178,8 +185,14 @@ async function changeRole(username, newRole) {{
     }});
     const d = await r.json();
     if (d.ok) {{ showToast('Роль изменена'); setTimeout(() => location.reload(), 400); }}
-    else showToast(d.error || 'Ошибка', true);
-  }} catch(e) {{ showToast('Сеть: ' + e.message, true); }}
+    else {{
+      showToast(d.error || 'Ошибка', true);
+      if (selectEl) selectEl.value = selectEl.dataset.current;
+    }}
+  }} catch(e) {{
+    showToast('Сеть: ' + e.message, true);
+    if (selectEl) selectEl.value = selectEl.dataset.current;
+  }}
 }}
 
 async function deleteWorkerAccess(workerId, workerName) {{
@@ -216,11 +229,24 @@ def render_users(user: str) -> str:
     admins = list_admins()
     workers = get_workers_with_access()
 
-    counts = {"admin": 0, "accountant": 0, "worker": len(workers)}
+    counts = {"admin": 0, "accountant": 0, "manager": 0, "worker": len(workers)}
     rows = []
+
+    role_pills = {
+        "admin": '<span class="pill brand">👑 Администратор</span>',
+        "accountant": '<span class="pill info">📊 Бухгалтер</span>',
+        "manager": '<span class="pill info">🕘 Менеджер смен</span>',
+    }
+    role_options = {
+        "admin": "👑 Администратор",
+        "accountant": "📊 Бухгалтер",
+        "manager": "🕘 Менеджер смен",
+    }
 
     for a in admins:
         role = a["role"] or "admin"
+        if role not in counts:
+            role = "admin"
         counts[role] += 1
         created = a["created_at"][:10] if a["created_at"] else "—"
         is_me = a["username"] == user
@@ -228,17 +254,17 @@ def render_users(user: str) -> str:
         # Single-quoted JS string inside double-quoted HTML attribute
         uname_js = "'" + a["username"].replace("\\", "\\\\").replace("'", "\\'") + "'"
 
-        if role == "admin":
-            role_pill = '<span class="pill brand">👑 Администратор</span>'
-            role_btn = (
-                f'<button class="btn btn-sm" onclick="changeRole({uname_js}, \'accountant\')">'
-                f'→ Бухгалтер</button> '
-            ) if not is_me else ''
+        role_pill = role_pills.get(role, role)
+        if is_me:
+            role_btn = ''
         else:
-            role_pill = '<span class="pill info">📊 Бухгалтер</span>'
+            opts = "".join(
+                f'<option value="{r}"{" selected" if r == role else ""}>{label}</option>'
+                for r, label in role_options.items()
+            )
             role_btn = (
-                f'<button class="btn btn-sm" onclick="changeRole({uname_js}, \'admin\')">'
-                f'→ Администратор</button> '
+                f'<select class="filter-select" data-current="{role}" '
+                f'onchange="changeRole({uname_js}, this.value, this)">{opts}</select> '
             )
 
         me_badge = ' <span class="text-sm-muted">(вы)</span>' if is_me else ''
@@ -284,7 +310,7 @@ def render_users(user: str) -> str:
             f'</tr>'
         )
 
-    count_all = counts["admin"] + counts["accountant"] + counts["worker"]
+    count_all = counts["admin"] + counts["accountant"] + counts["manager"] + counts["worker"]
 
     worker_names = {w["id"]: w["name"] for w in get_workers(include_deleted=True)}
 
@@ -312,6 +338,7 @@ def render_users(user: str) -> str:
         count_all=count_all,
         count_admin=counts["admin"],
         count_accountant=counts["accountant"],
+        count_manager=counts["manager"],
         count_worker=counts["worker"],
         login_rows="\n".join(login_rows) if login_rows else
             '<tr><td colspan="3" class="empty-cell">Нет данных</td></tr>',

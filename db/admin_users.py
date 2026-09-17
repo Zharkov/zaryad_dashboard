@@ -27,7 +27,7 @@ def list_admins() -> list:
 
 
 def add_admin(username: str, password: str, role: str = "admin") -> tuple[bool, str]:
-    if role not in ("admin", "accountant"):
+    if role not in ("admin", "accountant", "manager"):
         return False, f"Неизвестная роль: {role}"
     try:
         with db_conn() as c:
@@ -52,7 +52,7 @@ def delete_admin(username: str) -> bool:
 
 
 def change_role(username: str, new_role: str) -> bool:
-    if new_role not in ("admin", "accountant"):
+    if new_role not in ("admin", "accountant", "manager"):
         return False
     with db_conn() as c:
         row = c.execute("SELECT id FROM admin_users WHERE username = ?", (username,)).fetchone()

@@ -5,7 +5,7 @@ from views import (
     render_login, render_dashboard, render_workers,
     render_worker_profile, render_my_page,
     render_objects, render_object_detail, render_csv, render_xlsx,
-    render_users,
+    render_users, render_crews, render_crew_detail, render_ledger,
 )
 from sessions import get_session
 from utils import safe_period, safe_date_str
@@ -74,6 +74,7 @@ class GetRoutesMixin:
 
         is_worker_role = session_data and session_data.get("role") == "worker"
         is_accountant_role = bool(session_data and session_data.get("role") == "accountant")
+        is_manager_role = bool(session_data and session_data.get("role") == "manager")
 
         if path in ("/", ""):
             if is_worker_role:
@@ -91,7 +92,8 @@ class GetRoutesMixin:
                 search = self._qs_get("search", "")
                 custom_from = safe_date_str(self._qs_get("from", ""))
                 custom_to = safe_date_str(self._qs_get("to", ""))
-                self._send(200, render_dashboard(period, search, user, custom_from, custom_to, is_accountant=is_accountant_role))
+                self._send(200, render_dashboard(period, search, user, custom_from, custom_to,
+                                                   is_accountant=is_accountant_role, is_manager=is_manager_role))
             return
 
         if path == "/my":
@@ -110,8 +112,25 @@ class GetRoutesMixin:
             self._send(403, "<h1>403 — доступ закрыт</h1>")
             return
 
-        if is_accountant_role and path not in ("/export", "/export_xlsx"):
+        if is_manager_role:
             self._send(403, "<h1>403 — доступ закрыт</h1>")
+            return
+
+        if is_accountant_role and path not in ("/export", "/export_xlsx", "/ledger"):
+            self._send(403, "<h1>403 — доступ закрыт</h1>")
+            return
+
+        if path == "/ledger":
+            period = safe_period(self._qs_get("period", "this_month"))
+            search = self._qs_get("search", "")
+            kind = self._qs_get("kind", "")
+            custom_from = safe_date_str(self._qs_get("from", ""))
+            custom_to = safe_date_str(self._qs_get("to", ""))
+            self._send(200, render_ledger(
+                user, period, search, kind, custom_from, custom_to,
+                can_delete=not is_accountant_role,
+                role="accountant" if is_accountant_role else "admin",
+            ))
             return
 
         if path == "/api/object_comments":
@@ -178,6 +197,22 @@ class GetRoutesMixin:
             body = render_object_detail(int(oid), user)
             if body is None:
                 self._not_found("объект не найден")
+                return
+            self._send(200, body)
+            return
+
+        if path == "/crews":
+            self._send(200, render_crews(user))
+            return
+
+        if path == "/crew":
+            cid = self._qs_get("id", "")
+            if not cid.isdigit():
+                self._not_found("бригада не найдена")
+                return
+            body = render_crew_detail(int(cid), user)
+            if body is None:
+                self._not_found("бригада не найдена")
                 return
             self._send(200, body)
             return

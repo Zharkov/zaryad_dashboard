@@ -2,12 +2,15 @@ import datetime as dt
 import html
 import json
 
-from views.common import topbar, render_heatmap, build_heatmap_info_json
+from views.common import (
+    topbar, render_heatmap, build_heatmap_info_json, render_fine_cards, money,
+)
 from db.workers import get_worker_by_id
 from db.shifts import get_all_shifts_for_worker
 from db.objects import get_objects
 from db.attachments import get_objects_of_worker
-from db.comments import get_comments
+from db.comments import get_comments, get_fine_comments_bulk
+from db.fines import get_fines_for_worker, safe_kind
 from utils import shift_hours, lateness, now_msk, hhmm_to_time
 
 _WORKER_PAGE = """<!doctype html>
@@ -15,7 +18,7 @@ _WORKER_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · {name}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/static/style.css?v=11">
+<link rel="stylesheet" href="/static/style.css?v=14">
 </head><body>
 {topbar}
 <div class="container">
@@ -27,6 +30,8 @@ _WORKER_PAGE = """<!doctype html>
 
 <div class="actions">
   <button class="btn btn-primary" onclick="openAddShift()">📝 Добавить смену</button>
+  <button class="btn btn-danger" onclick="openAddFine('fine')">💰 Выдать штраф</button>
+  <button class="btn btn-ok" onclick="openAddFine('bonus')">🎁 Выдать премию</button>
 </div>
 
 <div class="cards">
@@ -35,6 +40,8 @@ _WORKER_PAGE = """<!doctype html>
   <div class="card"><div class="v">{avg_per_day}</div><div class="l">Среднее в день</div></div>
   <div class="card"><div class="v">{late_count}</div><div class="l">Опозданий</div></div>
   <div class="card"><div class="v">{overtime_count}</div><div class="l">Переработок</div></div>
+  <div class="card"><div class="v amount-fine">{fines_total} ₽</div><div class="l">Штрафов всего</div></div>
+  <div class="card"><div class="v amount-bonus">{bonus_total} ₽</div><div class="l">Премий всего</div></div>
 </div>
 
 <h2>📍 Объекты ({attached_count})</h2>
@@ -58,6 +65,8 @@ _WORKER_PAGE = """<!doctype html>
 
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('shifts', this)">📋 История смен</button>
+  <button class="tab-btn" onclick="switchTab('fines', this)">💰 Штрафы ({fines_count})</button>
+  <button class="tab-btn" onclick="switchTab('bonuses', this)">🎁 Премии ({bonus_count})</button>
   <button class="tab-btn" onclick="switchTab('comments', this)">💬 Комментарии ({comments_count})</button>
 </div>
 
@@ -69,6 +78,20 @@ _WORKER_PAGE = """<!doctype html>
 </table>
 </div>
 <div class="footer">{name} · {total_shifts} смен</div>
+</div>
+
+<div id="tab_fines" class="tab-panel">
+  <div class="actions">
+    <button class="btn btn-danger" onclick="openAddFine('fine')">💰 Выдать штраф</button>
+  </div>
+  <div id="finesBlock">{fines_html}</div>
+</div>
+
+<div id="tab_bonuses" class="tab-panel">
+  <div class="actions">
+    <button class="btn btn-ok" onclick="openAddFine('bonus')">🎁 Выдать премию</button>
+  </div>
+  <div id="bonusesBlock">{bonuses_html}</div>
 </div>
 
 <div id="tab_comments" class="tab-panel">
@@ -173,10 +196,35 @@ _WORKER_PAGE = """<!doctype html>
   </div>
 </div>
 
+<div class="modal-bg" id="modalAddFine" onclick="if(event.target===this)closeAddFine()">
+  <div class="modal narrow">
+    <h3 id="afHeading">💰 Выдать штраф · {name}</h3>
+    <div class="row">
+      <label class="field-label">Дата:</label>
+      <input type="date" id="afDate">
+    </div>
+    <div class="row">
+      <label class="field-label">Название:</label>
+      <input type="text" id="afTitle" class="input-full" placeholder="Например: опоздание">
+    </div>
+    <div class="row">
+      <label class="field-label">Сумма, ₽:</label>
+      <input type="number" id="afAmount" class="input-full" min="1" step="1" placeholder="1000">
+    </div>
+    <textarea id="afDesc" class="textarea-full mt-sm" rows="3"
+              placeholder="Описание причины штрафа..."></textarea>
+    <div class="footer-btns">
+      <button class="btn" onclick="closeAddFine()">Отмена</button>
+      <button class="btn btn-danger" id="afSubmitBtn" onclick="submitAddFine()">Выдать штраф</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 const WORKER_ID = {worker_id};
+const WORKER_NAME = {worker_name_json};
 const ALL_OBJECTS = {objects_json};
 const ATTACHED_OBJ_IDS = new Set({attached_obj_ids});
 const HEATMAP_INFO = {heatmap_info_json};
@@ -184,15 +232,24 @@ const HEATMAP_INFO = {heatmap_info_json};
 function showDayInfo(dateStr, cellEl) {{
   document.querySelectorAll(".heatmap .cell.selected").forEach(c => c.classList.remove("selected"));
   if (cellEl) cellEl.classList.add("selected");
-  const shifts = HEATMAP_INFO[dateStr] || [];
+  const entries = HEATMAP_INFO[dateStr] || [];
   const d = new Date(dateStr + "T00:00:00");
   const dateLbl = d.toLocaleDateString("ru-RU", {{day:"2-digit", month:"2-digit", year:"numeric", weekday:"long"}});
   const panel = document.getElementById("dayInfoPanel");
   let html = `<div class="heatmap-info-date">📅 ${{dateLbl}}</div>`;
-  if (!shifts.length) {{
-    html += '<p class="text-sm-muted">Смен в этот день нет</p>';
+  if (!entries.length) {{
+    html += '<p class="text-sm-muted">Событий в этот день нет</p>';
   }} else {{
-    html += shifts.map(s => {{
+    html += entries.map(s => {{
+      if (s.kind === "fine" || s.kind === "bonus") {{
+        const isBonus = s.kind === "bonus";
+        return `<div class="comment-card ${{isBonus ? "bonus-card" : "fine-card"}}" style="margin:8px 0;">` +
+          `<div class="comment-meta"><strong>${{isBonus ? "🎁" : "💰"}} ${{escHtml(s.title)}}</strong>` +
+          `<span class="pill ${{isBonus ? "bonus-amount" : "fine-amount"}}">` +
+          `${{isBonus ? "+" : "−"}}${{s.amount}} ₽</span></div>` +
+          (s.description ? `<div class="comment-body">${{escHtml(s.description)}}</div>` : '') +
+          `</div>`;
+      }}
       const typeLbl = s.shift_type === "night" ? "🌙 Ночная" : "☀️ Дневная";
       const hoursLbl = s.hours !== null ? `${{s.hours.toFixed(2)}} ч` : "смена открыта";
       const marks = [];
@@ -208,6 +265,9 @@ function showDayInfo(dateStr, cellEl) {{
     }}).join("");
   }}
   panel.innerHTML = html;
+}}
+function escHtml(s) {{
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }}
 
 function openAttachObj() {{
@@ -346,6 +406,79 @@ async function deleteComment(id) {{
   }} catch(e) {{ showToast('Сеть: ' + e.message, true); }}
 }}
 
+let addFineKind = "fine";
+function openAddFine(kind) {{
+  addFineKind = kind === "bonus" ? "bonus" : "fine";
+  const isBonus = addFineKind === "bonus";
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, "0");
+  const dd = String(today.getDate()).padStart(2, "0");
+  document.getElementById("afDate").value = `${{yyyy}}-${{mm}}-${{dd}}`;
+  document.getElementById("afTitle").value = "";
+  document.getElementById("afDesc").value = "";
+  document.getElementById("afAmount").value = "";
+  document.getElementById("afHeading").textContent =
+    (isBonus ? "🎁 Выдать премию · " : "💰 Выдать штраф · ") + WORKER_NAME;
+  document.getElementById("afTitle").placeholder =
+    isBonus ? "Например: перевыполнение плана" : "Например: опоздание";
+  document.getElementById("afDesc").placeholder =
+    isBonus ? "За что начислена премия..." : "Описание причины штрафа...";
+  const btn = document.getElementById("afSubmitBtn");
+  btn.textContent = isBonus ? "Выдать премию" : "Выдать штраф";
+  btn.classList.toggle("btn-ok", isBonus);
+  btn.classList.toggle("btn-danger", !isBonus);
+  document.getElementById("modalAddFine").classList.add("show");
+}}
+function closeAddFine() {{ document.getElementById("modalAddFine").classList.remove("show"); }}
+async function submitAddFine() {{
+  const date = document.getElementById("afDate").value;
+  const title = document.getElementById("afTitle").value.trim();
+  const description = document.getElementById("afDesc").value.trim();
+  const amount = parseFloat(document.getElementById("afAmount").value);
+  if (!date) {{ showToast("Укажи дату", true); return; }}
+  if (!title) {{ showToast("Укажи название", true); return; }}
+  if (!amount || amount <= 0) {{ showToast("Укажи сумму", true); return; }}
+  try {{
+    const r = await fetch("/api/add_fine", {{
+      method: "POST", headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{worker_id: WORKER_ID, date, title, description, amount, kind: addFineKind}}),
+    }});
+    const d = await r.json();
+    if (d.ok) {{
+      showToast(addFineKind === "bonus" ? "Премия выдана" : "Штраф выдан");
+      closeAddFine();
+      setTimeout(() => location.reload(), 500);
+    }} else {{ showToast(d.error || "Ошибка", true); }}
+  }} catch (e) {{ showToast("Сеть: " + e.message, true); }}
+}}
+async function deleteFine(id, kind) {{
+  if (!confirm(kind === "bonus" ? "Удалить премию?" : "Удалить штраф?")) return;
+  try {{
+    const r = await fetch("/api/delete_fine", {{
+      method: "POST", headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{id}}),
+    }});
+    const d = await r.json();
+    if (d.ok) {{ showToast("Удалено"); setTimeout(() => location.reload(), 400); }}
+    else showToast(d.error || "Ошибка", true);
+  }} catch (e) {{ showToast("Сеть: " + e.message, true); }}
+}}
+async function submitFineComment(fineId) {{
+  const el = document.getElementById("fineCommentInput" + fineId);
+  const text = el.value.trim();
+  if (!text) {{ showToast("Введи текст", true); return; }}
+  try {{
+    const r = await fetch("/api/add_fine_comment", {{
+      method: "POST", headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{fine_id: fineId, text}}),
+    }});
+    const d = await r.json();
+    if (d.ok) {{ showToast("Добавлено"); setTimeout(() => location.reload(), 400); }}
+    else showToast(d.error || "Ошибка", true);
+  }} catch (e) {{ showToast("Сеть: " + e.message, true); }}
+}}
+
 let editingShiftIdPF = null;
 function editShiftFromProfile(id, arr, left, name, date, shiftType) {{
   editingShiftIdPF = id;
@@ -471,8 +604,9 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
                 overtime_count += 1
 
     avg_per_day = round(total_hours / days_with_work, 2) if days_with_work else 0
-    heatmap_cells = render_heatmap(all_shifts, today)
-    heatmap_info_json = build_heatmap_info_json(all_shifts, worker)
+    fines = get_fines_for_worker(worker_id)
+    heatmap_cells = render_heatmap(all_shifts, today, fines)
+    heatmap_info_json = build_heatmap_info_json(all_shifts, worker, fines)
 
     rows = []
     for s in all_shifts[:50]:
@@ -566,6 +700,13 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
     else:
         comments_html = '<p class="text-sm-muted">Комментариев пока нет</p>'
 
+    fine_comments_map = get_fine_comments_bulk([f["id"] for f in fines])
+    only_fines = [f for f in fines if safe_kind(f["kind"]) == "fine"]
+    only_bonuses = [f for f in fines if safe_kind(f["kind"]) == "bonus"]
+    fines_html = render_fine_cards(only_fines, fine_comments_map, can_delete=True)
+    bonuses_html = render_fine_cards(only_bonuses, fine_comments_map, can_delete=True,
+                                     empty_text="Премий нет")
+
     return _WORKER_PAGE.format(
         topbar=topbar("workers", user),
         name=html.escape(worker["name"]),
@@ -593,4 +734,11 @@ def render_worker_profile(worker_id: int, user: str) -> str | None:
         total_shifts=len(all_shifts),
         comments_html=comments_html,
         comments_count=len(comments),
+        fines_html=fines_html,
+        fines_count=len(only_fines),
+        bonuses_html=bonuses_html,
+        bonus_count=len(only_bonuses),
+        fines_total=money(sum(f["amount"] for f in only_fines)),
+        bonus_total=money(sum(f["amount"] for f in only_bonuses)),
+        worker_name_json=json.dumps(worker["name"], ensure_ascii=False),
     )

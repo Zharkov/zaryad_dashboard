@@ -2,10 +2,12 @@ import datetime as dt
 import html
 import json
 
-from views.common import render_heatmap, build_heatmap_info_json
+from views.common import render_heatmap, build_heatmap_info_json, render_fine_cards
 from db.workers import get_worker_by_id
 from db.shifts import get_all_shifts_for_worker, get_shifts
 from db.attachments import get_objects_of_worker
+from db.fines import get_fines_for_worker, safe_kind
+from db.comments import get_fine_comments_bulk
 from utils import shift_hours, lateness, now_msk, hhmm_to_time, parse_period, PERIOD_LABELS
 
 _MY_PAGE = """<!doctype html>
@@ -13,7 +15,7 @@ _MY_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · {name}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/static/style.css?v=11">
+<link rel="stylesheet" href="/static/style.css?v=14">
 </head><body>
 
 <div class="topbar">
@@ -75,6 +77,12 @@ _MY_PAGE = """<!doctype html>
 
 {objects_block}
 
+<h2>💰 Штрафы ({fines_count})</h2>
+<div id="finesBlock" class="mb-lg">{fines_html}</div>
+
+<h2>🎁 Премии ({bonus_count})</h2>
+<div id="bonusesBlock" class="mb-lg">{bonuses_html}</div>
+
 <h2>Календарь последних 30 дней</h2>
 <div class="heatmap-wrap">
   <div class="heatmap">{heatmap}</div>
@@ -97,6 +105,9 @@ _MY_PAGE = """<!doctype html>
 <div class="footer">{name} · {total_shifts} смен за период</div>
 </div>
 
+<div class="toast" id="toast"></div>
+
+<script src="/static/app.js?v=1"></script>
 <script src="/static/chart.min.js"></script>
 <script>
 function toggleCal() {{
@@ -104,18 +115,30 @@ function toggleCal() {{
   b.style.display = (b.style.display === "none" || !b.style.display) ? "block" : "none";
 }}
 const HEATMAP_INFO = {heatmap_info_json};
+function escHtml(s) {{
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}}
 function showDayInfo(dateStr, cellEl) {{
   document.querySelectorAll(".heatmap .cell.selected").forEach(c => c.classList.remove("selected"));
   if (cellEl) cellEl.classList.add("selected");
-  const shifts = HEATMAP_INFO[dateStr] || [];
+  const entries = HEATMAP_INFO[dateStr] || [];
   const d = new Date(dateStr + "T00:00:00");
   const dateLbl = d.toLocaleDateString("ru-RU", {{day:"2-digit", month:"2-digit", year:"numeric", weekday:"long"}});
   const panel = document.getElementById("dayInfoPanel");
   let html = `<div class="heatmap-info-date">📅 ${{dateLbl}}</div>`;
-  if (!shifts.length) {{
-    html += '<p class="text-sm-muted">Смен в этот день нет</p>';
+  if (!entries.length) {{
+    html += '<p class="text-sm-muted">Событий в этот день нет</p>';
   }} else {{
-    html += shifts.map(s => {{
+    html += entries.map(s => {{
+      if (s.kind === "fine" || s.kind === "bonus") {{
+        const isBonus = s.kind === "bonus";
+        return `<div class="comment-card ${{isBonus ? "bonus-card" : "fine-card"}}" style="margin:8px 0;">` +
+          `<div class="comment-meta"><strong>${{isBonus ? "🎁" : "💰"}} ${{escHtml(s.title)}}</strong>` +
+          `<span class="pill ${{isBonus ? "bonus-amount" : "fine-amount"}}">` +
+          `${{isBonus ? "+" : "−"}}${{s.amount}} ₽</span></div>` +
+          (s.description ? `<div class="comment-body">${{escHtml(s.description)}}</div>` : '') +
+          `</div>`;
+      }}
       const typeLbl = s.shift_type === "night" ? "🌙 Ночная" : "☀️ Дневная";
       const hoursLbl = s.hours !== null ? `${{s.hours.toFixed(2)}} ч` : "смена открыта";
       const marks = [];
@@ -131,6 +154,20 @@ function showDayInfo(dateStr, cellEl) {{
     }}).join("");
   }}
   panel.innerHTML = html;
+}}
+async function submitFineComment(fineId) {{
+  const el = document.getElementById("fineCommentInput" + fineId);
+  const text = el.value.trim();
+  if (!text) {{ showToast("Введи текст", true); return; }}
+  try {{
+    const r = await fetch("/api/add_fine_comment", {{
+      method: "POST", headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{fine_id: fineId, text}}),
+    }});
+    const d = await r.json();
+    if (d.ok) {{ showToast("Добавлено"); setTimeout(() => location.reload(), 400); }}
+    else showToast(d.error || "Ошибка", true);
+  }} catch (e) {{ showToast("Сеть: " + e.message, true); }}
 }}
 const opts = {{
   responsive:true, maintainAspectRatio:false,
@@ -197,8 +234,9 @@ def render_my_page(worker_id: int, user: str, period: str = "today",
                 overtime_count += 1
 
     avg_per_day = round(period_hours / days_with_work, 2) if days_with_work else 0
-    heatmap_cells = render_heatmap(all_shifts, today)
-    heatmap_info_json = build_heatmap_info_json(all_shifts, worker)
+    fines = get_fines_for_worker(worker_id)
+    heatmap_cells = render_heatmap(all_shifts, today, fines)
+    heatmap_info_json = build_heatmap_info_json(all_shifts, worker, fines)
 
     rows = []
     for s in period_shifts:
@@ -258,6 +296,13 @@ def render_my_page(worker_id: int, user: str, period: str = "today",
     cal_to = custom_to if custom_to else date_to.isoformat()
     cal_display_style = "" if period == "custom" else "display:none;"
 
+    fine_comments_map = get_fine_comments_bulk([f["id"] for f in fines])
+    only_fines = [f for f in fines if safe_kind(f["kind"]) == "fine"]
+    only_bonuses = [f for f in fines if safe_kind(f["kind"]) == "bonus"]
+    fines_html = render_fine_cards(only_fines, fine_comments_map, can_delete=False)
+    bonuses_html = render_fine_cards(only_bonuses, fine_comments_map, can_delete=False,
+                                     empty_text="Премий нет")
+
     return _MY_PAGE.format(
         name=html.escape(worker["name"]),
         name_html=html.escape(worker["name"]),
@@ -282,4 +327,8 @@ def render_my_page(worker_id: int, user: str, period: str = "today",
         by_month_labels=json.dumps(bm_labels),
         by_month_data=json.dumps(bm_data),
         total_shifts=len(period_shifts),
+        fines_html=fines_html,
+        fines_count=len(only_fines),
+        bonuses_html=bonuses_html,
+        bonus_count=len(only_bonuses),
     )

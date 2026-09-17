@@ -6,12 +6,14 @@
   python manage_admins.py list
   python manage_admins.py add <логин> <пароль>
   python manage_admins.py add <логин> <пароль> accountant
+  python manage_admins.py add <логин> <пароль> manager
   python manage_admins.py delete <логин>
   python manage_admins.py passwd <логин> <новый_пароль>
 
 Роли:
   admin      — полный доступ (по умолчанию)
   accountant — только просмотр и скачивание Excel
+  manager    — только открыть/закрыть смену (сегодняшним временем)
 """
 import sys
 from db.conn import db_migrate
@@ -40,7 +42,7 @@ def main():
 
     elif cmd == "add":
         if len(args) < 3:
-            print("Использование: python manage_admins.py add <логин> <пароль> [accountant]")
+            print("Использование: python manage_admins.py add <логин> <пароль> [accountant|manager]")
             sys.exit(1)
         role = args[3] if len(args) > 3 else "admin"
         ok, msg = add_admin(args[1], args[2], role)

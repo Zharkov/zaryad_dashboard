@@ -6,6 +6,7 @@ import urllib.parse
 from views.common import topbar
 from db.workers import get_workers
 from db.shifts import get_shifts, get_open_shifts
+from db.time_presets import get_time_presets
 from db.comments import get_shift_comments_bulk
 from db.attachments import get_worker_object_map
 from db.objects import get_objects
@@ -16,7 +17,7 @@ _DASHBOARD_HTML = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · Дашборд</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/static/style.css?v=11">
+<link rel="stylesheet" href="/static/style.css?v=13">
 </head><body>
 
 {topbar}
@@ -111,11 +112,7 @@ _DASHBOARD_HTML = """<!doctype html>
     <div class="row">
       <label>Время:</label>
       <input type="time" id="massTime" onchange="massGuessShiftType()">
-      <div class="time-presets">
-        <button type="button" id="massPreset1" data-t="09:00" onclick="setTime(this.dataset.t)">9:00</button>
-        <button type="button" id="massPreset2" data-t="17:00" onclick="setTime(this.dataset.t)">17:00</button>
-        <button type="button" onclick="setTimeNow()">Сейчас</button>
-      </div>
+      <div class="time-presets" id="massPresets"></div>
     </div>
     <div class="row shift-type-row" id="massShiftType">
       <label>Смена:</label>
@@ -232,6 +229,8 @@ _DASHBOARD_HTML = """<!doctype html>
 <script>
 const WORKERS = {workers_json};
 const IS_ACCOUNTANT = {is_accountant_js};
+let TIME_PRESETS = {time_presets_json};
+const CAN_MANAGE_PRESETS = {can_manage_presets_js};
 let massAction = "arr";
 let editingShiftId = null;
 
@@ -416,14 +415,81 @@ function openMassMark(action) {{
 }}
 function closeMass() {{ document.getElementById("modalMass").classList.remove("show"); }}
 function setTime(t) {{ document.getElementById("massTime").value = t; }}
+function currentMassShiftType() {{
+  return document.querySelector('input[name="massShiftType"]:checked').value;
+}}
 function updateMassPresets() {{
-  const isNight = document.querySelector('input[name="massShiftType"]:checked').value === "night";
-  const p1 = document.getElementById("massPreset1");
-  const p2 = document.getElementById("massPreset2");
-  p1.dataset.t = isNight ? "22:00" : "09:00";
-  p1.textContent = isNight ? "22:00" : "9:00";
-  p2.dataset.t = isNight ? "06:00" : "17:00";
-  p2.textContent = isNight ? "6:00" : "17:00";
+  const shiftType = currentMassShiftType();
+  const box = document.getElementById("massPresets");
+  box.innerHTML = "";
+  (TIME_PRESETS[shiftType] || []).forEach(p => {{
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = p.time;
+    btn.onclick = () => setTime(p.time);
+    if (CAN_MANAGE_PRESETS) {{
+      const del = document.createElement("span");
+      del.textContent = " ×";
+      del.className = "preset-del";
+      del.title = "Удалить шаблон";
+      del.onclick = (e) => {{ e.stopPropagation(); deleteTimePreset(p.id); }};
+      btn.appendChild(del);
+    }}
+    box.appendChild(btn);
+  }});
+  const nowBtn = document.createElement("button");
+  nowBtn.type = "button";
+  nowBtn.textContent = "Сейчас";
+  nowBtn.onclick = setTimeNow;
+  box.appendChild(nowBtn);
+  if (CAN_MANAGE_PRESETS) {{
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.textContent = "+ Шаблон";
+    addBtn.onclick = addTimePreset;
+    box.appendChild(addBtn);
+  }}
+}}
+async function addTimePreset() {{
+  const shiftType = currentMassShiftType();
+  const time = (prompt("Время шаблона (ЧЧ:ММ), например 09:00:") || "").trim();
+  if (!time) return;
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {{ showToast("Неверный формат времени", true); return; }}
+  try {{
+    const r = await fetch("/api/add_time_preset", {{
+      method: "POST",
+      headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{shift_type: shiftType, time}}),
+    }});
+    const data = await r.json();
+    if (data.ok) {{
+      TIME_PRESETS[shiftType] = TIME_PRESETS[shiftType] || [];
+      TIME_PRESETS[shiftType].push({{id: data.id, time}});
+      TIME_PRESETS[shiftType].sort((a, b) => a.time.localeCompare(b.time));
+      updateMassPresets();
+    }} else {{
+      showToast(data.error || "Ошибка", true);
+    }}
+  }} catch (e) {{ showToast("Сеть: " + e.message, true); }}
+}}
+async function deleteTimePreset(id) {{
+  if (!confirm("Удалить этот шаблон времени?")) return;
+  try {{
+    const r = await fetch("/api/delete_time_preset", {{
+      method: "POST",
+      headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{id}}),
+    }});
+    const data = await r.json();
+    if (data.ok) {{
+      for (const st of Object.keys(TIME_PRESETS)) {{
+        TIME_PRESETS[st] = TIME_PRESETS[st].filter(p => p.id !== id);
+      }}
+      updateMassPresets();
+    }} else {{
+      showToast(data.error || "Ошибка", true);
+    }}
+  }} catch (e) {{ showToast("Сеть: " + e.message, true); }}
 }}
 function setTimeNow() {{
   const d = new Date();
@@ -700,7 +766,8 @@ function chartIconClick() {{
 
 def render_dashboard(period: str, search: str, user: str,
                      custom_from: str = "", custom_to: str = "",
-                     is_accountant: bool = False) -> str:
+                     is_accountant: bool = False, is_manager: bool = False) -> str:
+    can_edit_shifts = not (is_accountant or is_manager)
     date_from, date_to = parse_period(period, custom_from, custom_to)
     shifts = get_shifts(date_from, date_to)
     workers = get_workers(include_deleted=False)
@@ -790,7 +857,7 @@ def render_dashboard(period: str, search: str, user: str,
             f"editShift({s['id']},'{arr_hhmm}','{left_hhmm}',{name_js},{date_js},"
             f"'{shift_type}')"
         )
-        if is_accountant:
+        if not can_edit_shifts:
             edit_btn = ''
             row_onclick = ''
             row_cls = f'shift-row {cls}'
@@ -834,7 +901,7 @@ def render_dashboard(period: str, search: str, user: str,
                         f'<button class="btn btn-sm btn-danger" '
                         f'onclick="event.stopPropagation(); deleteShiftComment({c["id"]})">'
                         f'× Удалить</button>'
-                        if not is_accountant else ''
+                        if can_edit_shifts else ''
                     )
                     + f'</div>'
                     f'<div class="comment-body">{html.escape(c["text"])}</div>'
@@ -957,10 +1024,23 @@ def render_dashboard(period: str, search: str, user: str,
         export_qs += f"&search={urllib.parse.quote(search)}"
     xlsx_url = f"/export_xlsx?{export_qs}"
 
+    time_presets_by_type: dict[str, list] = {"day": [], "night": []}
+    for p in get_time_presets():
+        st = p["shift_type"] if p["shift_type"] in time_presets_by_type else "day"
+        time_presets_by_type[st].append({"id": p["id"], "time": p["time"]})
+    can_manage_presets = not is_accountant and not is_manager
+
     if is_accountant:
         actions_block = (
             f'<div class="actions">'
             f'<a class="btn" href="{xlsx_url}">📥 Экспорт Excel</a>'
+            f'</div>'
+        )
+    elif is_manager:
+        actions_block = (
+            f'<div class="actions">'
+            f'<button class="btn btn-primary" onclick="openMassMark(\'arr\')">➕ Приход</button>'
+            f'<button class="btn btn-primary" onclick="openMassMark(\'dep\')">➖ Уход</button>'
             f'</div>'
         )
     else:
@@ -973,11 +1053,16 @@ def render_dashboard(period: str, search: str, user: str,
             f'</div>'
         )
 
-    detail_title = "Детализация · только просмотр" if is_accountant else "Детализация · клик по строке для правки"
+    if is_accountant:
+        detail_title = "Детализация · только просмотр"
+    elif is_manager:
+        detail_title = "Детализация · открыть/закрыть смену сегодня"
+    else:
+        detail_title = "Детализация · клик по строке для правки"
     is_accountant_js = "true" if is_accountant else "false"
 
     return _DASHBOARD_HTML.format(
-        topbar=topbar("dashboard", user, role="accountant" if is_accountant else "admin"),
+        topbar=topbar("dashboard", user, role="accountant" if is_accountant else ("manager" if is_manager else "admin")),
         period_label=html.escape(PERIOD_LABELS.get(period, period)),
         period=html.escape(period),
         period_links=period_links,
@@ -1008,5 +1093,7 @@ def render_dashboard(period: str, search: str, user: str,
         chart_by_night_data=json.dumps(bd_data_night),
         chart_by_total_data=json.dumps(bd_data_total),
         workers_json=json.dumps(workers_data, ensure_ascii=False),
+        time_presets_json=json.dumps(time_presets_by_type, ensure_ascii=False),
+        can_manage_presets_js="true" if can_manage_presets else "false",
         now=now.strftime("%d.%m.%Y %H:%M"),
     )

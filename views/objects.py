@@ -10,7 +10,7 @@ _OBJECTS_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <title>ЗАРЯД · Объекты</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/static/style.css?v=11">
+<link rel="stylesheet" href="/static/style.css?v=12">
 </head><body>
 {topbar}
 <div class="container">

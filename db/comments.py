@@ -109,6 +109,57 @@ def delete_object_comment(comment_id: int) -> bool:
     return True
 
 
+def get_fine_comments(fine_id: int) -> list:
+    with db_conn() as c:
+        return list(c.execute(
+            "SELECT * FROM fine_comments WHERE fine_id = ? AND deleted_at IS NULL "
+            "ORDER BY created_at ASC",
+            (fine_id,),
+        ))
+
+
+def add_fine_comment(fine_id: int, author: str, text: str) -> tuple[bool, str, int]:
+    now = now_msk().isoformat()
+    with db_conn() as c:
+        cur = c.execute(
+            "INSERT INTO fine_comments (fine_id, author, text, created_at) VALUES (?, ?, ?, ?)",
+            (fine_id, author, text, now),
+        )
+        return True, "OK", cur.lastrowid
+
+
+def delete_fine_comment(comment_id: int) -> bool:
+    with db_conn() as c:
+        row = c.execute("SELECT id FROM fine_comments WHERE id = ?", (comment_id,)).fetchone()
+        if not row:
+            return False
+        c.execute(
+            "UPDATE fine_comments SET deleted_at = ? WHERE id = ?",
+            (now_msk().isoformat(), comment_id),
+        )
+    return True
+
+
+def get_fine_comments_bulk(fine_ids: list) -> dict:
+    if not fine_ids:
+        return {}
+    with db_conn() as c:
+        placeholders = ",".join("?" * len(fine_ids))
+        rows = c.execute(
+            f"SELECT * FROM fine_comments "
+            f"WHERE fine_id IN ({placeholders}) AND deleted_at IS NULL "
+            f"ORDER BY fine_id, created_at ASC",
+            fine_ids,
+        ).fetchall()
+    result: dict = {}
+    for row in rows:
+        fid = row["fine_id"]
+        if fid not in result:
+            result[fid] = []
+        result[fid].append(dict(row))
+    return result
+
+
 def get_shift_comments_bulk(shift_ids: list) -> dict:
     if not shift_ids:
         return {}

@@ -16,10 +16,20 @@ from db.objects import (
     add_object, update_object, soft_delete_object, restore_object,
 )
 from db.attachments import attach_worker_to_object, detach_worker_from_object
+from db.skills import (
+    add_skill, soft_delete_skill, set_worker_skill, delete_worker_skill,
+)
+from db.compat import set_compat
+from db.crews import (
+    add_crew, update_crew, soft_delete_crew,
+    add_worker_to_crew, remove_worker_from_crew,
+)
 from db.credentials import (
     authenticate_worker, create_or_reset_worker_credential,
     block_worker_credential, unblock_worker_credential,
 )
+from db.fines import add_fine, delete_fine, get_fine_by_id, safe_kind
+from db.time_presets import add_time_preset, delete_time_preset
 from utils import now_msk
 from login_throttle import is_locked, register_failure, register_success
 from config import SESSION_TTL_DAYS, SESSION_TTL_SHORT_DAYS
@@ -49,6 +59,19 @@ class PostRoutesMixin:
 
         is_worker = session_data and session_data.get("role") == "worker"
         is_accountant = session_data and session_data.get("role") == "accountant"
+        is_manager = session_data and session_data.get("role") == "manager"
+
+        MANAGER_ALLOWED_ROUTES = ("/api/mass_mark", "/api/close_shift_now")
+
+        if path == "/api/add_fine_comment":
+            if is_accountant or is_manager:
+                self._send_json({"ok": False, "error": "Только просмотр"}, 403)
+                return
+            try:
+                self._api_add_fine_comment(user, session_data)
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "Некорректные параметры"}, 400)
+            return
 
         ADMIN_ROUTES = {
             "/api/mass_mark": self._api_mass_mark,
@@ -57,6 +80,8 @@ class PostRoutesMixin:
             "/api/reopen_shift": self._api_reopen_shift,
             "/api/delete_shift": self._api_delete_shift,
             "/api/close_shift_now": self._api_close_shift_now,
+            "/api/add_time_preset": self._api_add_time_preset,
+            "/api/delete_time_preset": self._api_delete_time_preset,
             "/api/add_worker": self._api_add_worker,
             "/api/update_worker": self._api_update_worker,
             "/api/soft_delete_worker": self._api_soft_delete_worker,
@@ -79,8 +104,20 @@ class PostRoutesMixin:
             "/api/delete_shift_comment": self._api_delete_shift_comment,
             "/api/add_object_comment": self._api_add_object_comment,
             "/api/delete_object_comment": self._api_delete_object_comment,
+            "/api/add_fine": self._api_add_fine,
+            "/api/delete_fine": self._api_delete_fine,
+            "/api/delete_fine_comment": self._api_delete_fine_comment,
             "/api/delete_worker_access": self._api_delete_worker_access,
             "/api/set_worker_password": self._api_set_worker_password,
+            "/api/add_skill": self._api_add_skill,
+            "/api/delete_skill": self._api_delete_skill,
+            "/api/set_worker_skill": self._api_set_worker_skill,
+            "/api/delete_worker_skill": self._api_delete_worker_skill,
+            "/api/set_compat": self._api_set_compat,
+            "/api/add_crew": self._api_add_crew,
+            "/api/update_crew": self._api_update_crew,
+            "/api/delete_crew": self._api_delete_crew,
+            "/api/set_crew_workers": self._api_set_crew_workers,
             "/api/add_user": self._api_add_user,
             "/api/change_user_role": self._api_change_user_role,
             "/api/change_user_password": self._api_change_user_password,
@@ -93,6 +130,8 @@ class PostRoutesMixin:
                 self._send_json({"error": "forbidden"}, 403)
             elif is_accountant:
                 self._send_json({"ok": False, "error": "Только просмотр"}, 403)
+            elif is_manager and path not in MANAGER_ALLOWED_ROUTES:
+                self._send_json({"ok": False, "error": "Доступ ограничен ролью менеджера"}, 403)
             else:
                 try:
                     handler(user)
@@ -299,6 +338,27 @@ class PostRoutesMixin:
             self._send_json({"ok": True, "time": now.strftime("%H:%M")})
         else:
             self._send_json({"error": msg}, 400)
+
+    def _api_add_time_preset(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        shift_type = (data.get("shift_type") or "").strip()
+        time_str = (data.get("time") or "").strip()
+        ok, msg, pid = add_time_preset(shift_type, time_str)
+        self._send_json({"ok": True, "id": pid} if ok else {"ok": False, "error": msg})
+
+    def _api_delete_time_preset(self, admin: str):
+        data = self._read_body_json()
+        pid = data.get("id") if data else None
+        if not pid:
+            self._send_json({"error": "no id"}, 400)
+            return
+        if delete_time_preset(int(pid)):
+            self._send_json({"ok": True})
+        else:
+            self._send_json({"error": "not found"}, 404)
 
     def _api_add_worker(self, admin: str):
         data = self._read_body_json()
@@ -611,7 +671,7 @@ class PostRoutesMixin:
             self._send_json({"error": "bad json"}, 400); return
         username = (data.get("username") or "").strip()
         role = (data.get("role") or "").strip()
-        if not username or role not in ("admin", "accountant"):
+        if not username or role not in ("admin", "accountant", "manager"):
             self._send_json({"ok": False, "error": "Нет данных"}, 400); return
         if username == admin:
             self._send_json({"ok": False, "error": "Нельзя изменить свою роль"}, 400); return
@@ -644,6 +704,119 @@ class PostRoutesMixin:
         ok = delete_admin(username)
         self._send_json({"ok": ok} if ok else {"ok": False, "error": "Не найден"})
 
+    def _api_add_skill(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        name = (data.get("name") or "").strip()
+        kind = (data.get("kind") or "skill").strip()
+        if not name:
+            self._send_json({"ok": False, "error": "Нет названия"}, 400)
+            return
+        ok, msg, sid = add_skill(name, kind, admin)
+        self._send_json({"ok": True, "id": sid} if ok else {"ok": False, "error": msg})
+
+    def _api_delete_skill(self, admin: str):
+        data = self._read_body_json()
+        sid = data.get("id") if data else None
+        if not sid:
+            self._send_json({"ok": False, "error": "Нет ID"}, 400)
+            return
+        ok = soft_delete_skill(int(sid), admin)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": "Не найдено"})
+
+    def _api_set_worker_skill(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        wid = data.get("worker_id")
+        sid = data.get("skill_id")
+        rating = data.get("rating")
+        note = (data.get("note") or "").strip()
+        if not wid or not sid or rating is None:
+            self._send_json({"ok": False, "error": "Нет данных"}, 400)
+            return
+        ok, msg = set_worker_skill(int(wid), int(sid), int(rating), note, admin)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": msg})
+
+    def _api_delete_worker_skill(self, admin: str):
+        data = self._read_body_json()
+        wid = data.get("worker_id") if data else None
+        sid = data.get("skill_id") if data else None
+        if not wid or not sid:
+            self._send_json({"ok": False, "error": "Нет данных"}, 400)
+            return
+        ok = delete_worker_skill(int(wid), int(sid), admin)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": "Не найдено"})
+
+    def _api_set_compat(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        from_id = data.get("from_worker_id")
+        to_id = data.get("to_worker_id")
+        score = data.get("score")
+        note = (data.get("note") or "").strip()
+        if not from_id or not to_id or score is None:
+            self._send_json({"ok": False, "error": "Нет данных"}, 400)
+            return
+        ok, msg = set_compat(int(from_id), int(to_id), int(score), note, admin)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": msg})
+
+    def _api_add_crew(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        name = (data.get("name") or "").strip()
+        note = (data.get("note") or "").strip()
+        if not name:
+            self._send_json({"ok": False, "error": "Нет названия"}, 400)
+            return
+        ok, msg, cid = add_crew(name, note, admin)
+        self._send_json({"ok": True, "id": cid} if ok else {"ok": False, "error": msg})
+
+    def _api_update_crew(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        cid = data.get("id")
+        name = (data.get("name") or "").strip() or None
+        note = data.get("note")
+        if not cid:
+            self._send_json({"ok": False, "error": "Нет ID"}, 400)
+            return
+        ok, msg = update_crew(int(cid), name, note, admin)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": msg})
+
+    def _api_delete_crew(self, admin: str):
+        data = self._read_body_json()
+        cid = data.get("id") if data else None
+        if not cid:
+            self._send_json({"ok": False, "error": "Нет ID"}, 400)
+            return
+        ok = soft_delete_crew(int(cid), admin)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": "Не найдено"})
+
+    def _api_set_crew_workers(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        cid = data.get("crew_id")
+        added = removed = 0
+        for wid in data.get("add", []):
+            if add_worker_to_crew(cid, wid, admin):
+                added += 1
+        for wid in data.get("remove", []):
+            if remove_worker_from_crew(cid, wid, admin):
+                removed += 1
+        self._send_json({"ok": True, "added": added, "removed": removed})
+
     def _api_delete_object_comment(self, admin: str):
         data = self._read_body_json()
         if not data:
@@ -656,3 +829,68 @@ class PostRoutesMixin:
         from db.comments import delete_object_comment
         ok = delete_object_comment(int(comment_id))
         self._send_json({"ok": ok})
+
+    def _api_add_fine(self, admin: str):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        worker_id = data.get("worker_id")
+        date_str = (data.get("date") or "").strip()
+        title = (data.get("title") or "").strip()
+        description = (data.get("description") or "").strip()
+        amount = data.get("amount")
+        kind = safe_kind(data.get("kind"))
+        if not worker_id or not date_str or not title or amount is None:
+            self._send_json({"ok": False, "error": "Нет данных"}, 400)
+            return
+        try:
+            dt.date.fromisoformat(date_str)
+            amount = float(amount)
+        except (ValueError, TypeError):
+            self._send_json({"ok": False, "error": "Некорректные данные"}, 400)
+            return
+        ok, msg, fid = add_fine(int(worker_id), date_str, title, description, amount,
+                                admin, kind)
+        self._send_json({"ok": True, "id": fid} if ok else {"ok": False, "error": msg})
+
+    def _api_delete_fine(self, admin: str):
+        data = self._read_body_json()
+        fine_id = data.get("id") if data else None
+        if not fine_id:
+            self._send_json({"ok": False, "error": "Нет ID"}, 400)
+            return
+        ok = delete_fine(int(fine_id), admin)
+        self._send_json({"ok": ok} if ok else {"ok": False, "error": "Не найден"})
+
+    def _api_delete_fine_comment(self, admin: str):
+        data = self._read_body_json()
+        comment_id = data.get("id") if data else None
+        if not comment_id:
+            self._send_json({"ok": False, "error": "Нет ID"}, 400)
+            return
+        from db.comments import delete_fine_comment
+        ok = delete_fine_comment(int(comment_id))
+        self._send_json({"ok": ok})
+
+    def _api_add_fine_comment(self, user: str, session_data):
+        data = self._read_body_json()
+        if not data:
+            self._send_json({"error": "bad json"}, 400)
+            return
+        fine_id = data.get("fine_id")
+        text = (data.get("text") or "").strip()
+        if not fine_id or not text:
+            self._send_json({"ok": False, "error": "Нет данных"}, 400)
+            return
+        fine = get_fine_by_id(int(fine_id))
+        if not fine:
+            self._send_json({"ok": False, "error": "Штраф не найден"}, 404)
+            return
+        is_worker = session_data and session_data.get("role") == "worker"
+        if is_worker and fine["worker_id"] != session_data.get("worker_id"):
+            self._send_json({"ok": False, "error": "forbidden"}, 403)
+            return
+        from db.comments import add_fine_comment
+        ok, msg, cid = add_fine_comment(int(fine_id), user, text)
+        self._send_json({"ok": ok, "id": cid} if ok else {"ok": False, "error": msg})
